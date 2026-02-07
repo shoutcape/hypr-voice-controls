@@ -1,35 +1,98 @@
+import json
 import re
+from pathlib import Path
 
+from .logging_utils import LOGGER
 from .models import CommandSpec
 
+USER_COMMANDS_PATH = Path.home() / ".config" / "hypr" / "voice-commands.json"
+_USER_COMMANDS_CACHE: list[CommandSpec] = []
+_USER_COMMANDS_MTIME_NS: int | None = None
 
-COMMANDS = [
-    CommandSpec(
-        r"^((workspace )?(one|1)|(tyotila|työtila) (yksi|1|ykkonen|ykkönen))$",
-        ["hyprctl", "dispatch", "workspace", "1"],
-        "Workspace 1",
-    ),
-    CommandSpec(
-        r"^((workspace )?(two|2)|(tyotila|työtila) (kaksi|2|kakkonen))$",
-        ["hyprctl", "dispatch", "workspace", "2"],
-        "Workspace 2",
-    ),
-    CommandSpec(
-        r"^(volume up|((laita )?(aani|ääni)(ta)? )?kovemmalle)$",
-        ["pamixer", "-i", "5"],
-        "Volume up",
-    ),
-    CommandSpec(
-        r"^(volume down|((laita )?(aani|ääni)(ta)? )?hiljemmalle)$",
-        ["pamixer", "-d", "5"],
-        "Volume down",
-    ),
-    CommandSpec(
-        r"^(lock( screen)?|lukitse( naytto| näyttö)?)$",
-        ["loginctl", "lock-session"],
-        "Lock screen",
-    ),
-]
+# Optional local fallback commands.
+# Keep this empty by default so spoken commands are JSON-driven.
+LOCAL_COMMANDS: list[CommandSpec] = []
+
+# Example local commands (not active unless copied to LOCAL_COMMANDS):
+# LOCAL_COMMANDS = [
+#     CommandSpec(
+#         r"^open obsidian$",
+#         ["hyprctl", "dispatch", "exec", "uwsm-app -- obsidian"],
+#         "Open Obsidian",
+#     ),
+# ]
+
+
+def _load_user_commands() -> list[CommandSpec]:
+    try:
+        payload = json.loads(USER_COMMANDS_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        LOGGER.error("Failed to read user voice commands path=%s err=%s", USER_COMMANDS_PATH, exc)
+        return []
+
+    if not isinstance(payload, list):
+        LOGGER.error("Invalid user voice commands format path=%s expected=list", USER_COMMANDS_PATH)
+        return []
+
+    loaded: list[CommandSpec] = []
+    for index, item in enumerate(payload):
+        if not isinstance(item, dict):
+            LOGGER.warning("Skipping user voice command index=%s reason=not_object", index)
+            continue
+
+        if item.get("enabled", True) is False:
+            continue
+
+        pattern = item.get("pattern")
+        argv = item.get("argv")
+        label = item.get("label")
+
+        if not isinstance(pattern, str) or not pattern.strip():
+            LOGGER.warning("Skipping user voice command index=%s reason=invalid_pattern", index)
+            continue
+        if not isinstance(label, str) or not label.strip():
+            LOGGER.warning("Skipping user voice command index=%s reason=invalid_label", index)
+            continue
+        if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) and arg for arg in argv):
+            LOGGER.warning("Skipping user voice command index=%s reason=invalid_argv", index)
+            continue
+
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            LOGGER.warning("Skipping user voice command index=%s reason=bad_regex err=%s", index, exc)
+            continue
+
+        loaded.append(CommandSpec(pattern=pattern, argv=argv, label=label))
+
+    LOGGER.info("Loaded user voice commands path=%s count=%s", USER_COMMANDS_PATH, len(loaded))
+    return loaded
+
+
+def get_user_commands() -> list[CommandSpec]:
+    global _USER_COMMANDS_CACHE, _USER_COMMANDS_MTIME_NS
+
+    try:
+        stat = USER_COMMANDS_PATH.stat()
+    except FileNotFoundError:
+        if _USER_COMMANDS_MTIME_NS is not None:
+            _USER_COMMANDS_CACHE = []
+            _USER_COMMANDS_MTIME_NS = None
+            LOGGER.info("User voice commands file removed path=%s", USER_COMMANDS_PATH)
+        return []
+    except Exception as exc:
+        LOGGER.error("Failed to stat user voice commands path=%s err=%s", USER_COMMANDS_PATH, exc)
+        return _USER_COMMANDS_CACHE
+
+    mtime_ns = stat.st_mtime_ns
+    if _USER_COMMANDS_MTIME_NS == mtime_ns:
+        return _USER_COMMANDS_CACHE
+
+    _USER_COMMANDS_CACHE = _load_user_commands()
+    _USER_COMMANDS_MTIME_NS = mtime_ns
+    return _USER_COMMANDS_CACHE
 
 
 def normalize(text: str) -> str:
@@ -39,66 +102,13 @@ def normalize(text: str) -> str:
     return clean
 
 
-def fuzzy_allowlist_match(clean_text: str) -> tuple[list[str] | None, str | None]:
-    words = set(clean_text.split())
-    compact = clean_text.replace(" ", "")
-
-    workspace_words = {"workspace", "työtila", "tyotila"}
-    one_words = {"1", "one", "yksi", "ykkonen", "ykkönen"}
-    two_words = {"2", "two", "kaksi", "kakkonen"}
-
-    volume_words = {"volume", "ääni", "aani", "ääntä", "aanta"}
-    up_words = {"up", "kovemmalle", "kovemmalla", "louder"}
-    down_words = {
-        "down",
-        "hiljemmalle",
-        "hiljemmalla",
-        "hiljimmalle",
-        "hiljimmälle",
-        "hiljemmälle",
-        "lower",
-    }
-
-    lock_words = {"lock", "lukitse", "lukit", "lukitseen"}
-    screen_words = {"screen", "näyttö", "naytto", "näytön", "nayton", "näyttöön", "nayttoon"}
-
-    if (workspace_words & words) and (one_words & words):
-        return ["hyprctl", "dispatch", "workspace", "1"], "Workspace 1"
-
-    if (workspace_words & words) and (two_words & words):
-        return ["hyprctl", "dispatch", "workspace", "2"], "Workspace 2"
-
-    if any(stem in clean_text for stem in {"hiljem", "hiljim", "hilimm"}) or any(
-        stem in compact for stem in {"hiljem", "hiljim", "hilimm"}
-    ):
-        return ["pamixer", "-d", "5"], "Volume down"
-
-    if any(stem in clean_text for stem in {"kovem", "kuvem"}) or any(
-        stem in compact for stem in {"kovem", "kuvem"}
-    ):
-        return ["pamixer", "-i", "5"], "Volume up"
-
-    if "lisää" in words and ("ääntä" in words or "ääni" in words or "aani" in words):
-        return ["pamixer", "-i", "5"], "Volume up"
-
-    if (volume_words & words and up_words & words) or clean_text in {"william up", "volyum up"}:
-        return ["pamixer", "-i", "5"], "Volume up"
-
-    if (volume_words & words and down_words & words) or clean_text in {
-        "william down",
-        "volyum down",
-        "hyviemmalle",
-    }:
-        return ["pamixer", "-d", "5"], "Volume down"
-
-    if (lock_words & words) and ((screen_words & words) or "lock" in words):
-        return ["loginctl", "lock-session"], "Lock screen"
-
-    return None, None
-
-
 def match_command(clean_text: str) -> tuple[list[str] | None, str | None]:
-    for command in COMMANDS:
+    for command in get_user_commands():
         if re.fullmatch(command.pattern, clean_text):
             return command.argv, command.label
-    return fuzzy_allowlist_match(clean_text)
+
+    for command in LOCAL_COMMANDS:
+        if re.fullmatch(command.pattern, clean_text):
+            return command.argv, command.label
+
+    return None, None

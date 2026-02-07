@@ -32,7 +32,6 @@ AUDIO_SOURCE = os.environ.get("VOICE_AUDIO_SOURCE", "default")
 LOG_PATH = Path.home() / ".local" / "state" / "voice-hotkey.log"
 SOCKET_PATH = Path.home() / ".local" / "state" / "voice-hotkey.sock"
 DICTATE_SECONDS = env_int("VOICE_DICTATE_SECONDS", 6)
-MAX_HOLD_SECONDS = env_int("VOICE_MAX_HOLD_SECONDS", 15)
 LANGUAGE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-language"
 DICTATE_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-dictate.json"
 COMMAND_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-command.json"

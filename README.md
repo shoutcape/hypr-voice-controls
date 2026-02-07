@@ -4,14 +4,32 @@ Voice hotkey daemon for Hyprland with two paths:
 
 - hold-to-command: transcribe speech and execute an allowlisted desktop action
 - hold-to-dictate: transcribe speech and paste text into the focused app
+- press/hold capture runs until key release (no fixed max hold timeout)
 
 This repo is the canonical source. Hyprland binds and the user service should point to this checkout.
+
+## Config templates
+
+Use repo examples instead of committing personal desktop config:
+
+- `examples/hypr/voice-hotkey.bindings.conf`
+- `examples/systemd/voice-hotkey.service`
+- `examples/hypr/voice-hotkey.autostart.conf`
+- `examples/hypr/voice-commands.json`
+
+Replace `<REPO_DIR>` in templates with your local checkout path, then copy the lines into:
+
+- `~/.config/hypr/bindings.conf`
+- `~/.config/systemd/user/voice-hotkey.service`
+- `~/.config/hypr/autostart.conf`
+
+For private spoken-command definitions, copy `examples/hypr/voice-commands.json` to `~/.config/hypr/voice-commands.json`.
 
 ## Runtime architecture
 
 - `voice-hotkey.py`: stable compatibility entrypoint
 - `voice_hotkey/app.py`: CLI modes, daemon client/server flow, orchestration
-- `voice_hotkey/commands.py`: normalization, regex allowlist, fuzzy fallbacks
+- `voice_hotkey/commands.py`: normalization, JSON command loading, optional local fallback examples
 - `voice_hotkey/audio.py`: ffmpeg recording and stop-signal lifecycle
 - `voice_hotkey/stt.py`: faster-whisper model loading, caching, transcription
 - `voice_hotkey/integrations.py`: notifications, paste injection, safe command execution
@@ -50,8 +68,30 @@ export VOICE_DEVICE="cuda,cpu"
 export VOICE_COMPUTE_TYPE=float16
 export VOICE_AUDIO_BACKEND=pulse
 export VOICE_AUDIO_SOURCE=default
-export VOICE_MAX_HOLD_SECONDS=15
 ```
+
+## Private spoken commands (Hypr config)
+
+Define personal phrase->command mappings in `~/.config/hypr/voice-commands.json`.
+
+Format:
+
+```json
+[
+  {
+    "label": "Open Obsidian",
+    "pattern": "^((open|launch|start) )?obsidian$",
+    "argv": ["hyprctl", "dispatch", "exec", "uwsm-app -- obsidian"]
+  }
+]
+```
+
+Notes:
+
+- commands in this file are matched before local fallback entries in `voice_hotkey/commands.py`
+- set `"enabled": false` to disable an entry without deleting it
+- the daemon auto-reloads this file when it changes (no restart required)
+- default command set lives in `examples/hypr/voice-commands.json` (copy to `~/.config/hypr/voice-commands.json`)
 
 ## Hyprland bindings (hold to talk)
 
@@ -91,6 +131,22 @@ systemctl --user restart voice-hotkey.service
 systemctl --user status voice-hotkey.service --no-pager
 ```
 
+Wayland env sync (recommended for reboot/login reliability):
+
+```bash
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS HYPRLAND_INSTANCE_SIGNATURE
+systemctl --user restart voice-hotkey.service
+```
+
+Persistent Omarchy/Hyprland startup hook:
+
+```conf
+# ~/.config/hypr/autostart.conf
+exec-once = dbus-update-activation-environment --systemd --all
+exec-once = systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS HYPRLAND_INSTANCE_SIGNATURE
+exec-once = systemctl --user restart voice-hotkey.service
+```
+
 ## Manual smoke tests
 
 ```bash
@@ -113,8 +169,13 @@ rg "Voice hotkey end status|Input source|Dictation hold|Paste attempt" ~/.local/
 
 - `No speech detected`: verify mic battery/power, mute state, and selected source
 - daemon not responding: `systemctl --user restart voice-hotkey.service`
-- missing command actions: check allowlist matching in `voice_hotkey/commands.py`
-- paste failures: ensure `wl-copy` and Hyprland `sendshortcut` are available
+- missing command actions: verify `~/.config/hypr/voice-commands.json` regex patterns and command argv values
+- paste failures (`Clipboard write failed rc=1`): import Wayland vars into user systemd, then restart service:
+
+```bash
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS HYPRLAND_INSTANCE_SIGNATURE
+systemctl --user restart voice-hotkey.service
+```
 
 ## Development notes
 

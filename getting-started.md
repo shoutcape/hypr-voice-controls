@@ -6,6 +6,7 @@ This guide sets up Hypr Voice Controls from scratch with the current architectur
 
 - Hold-to-command: press key to record, release to transcribe and run an allowlisted action.
 - Hold-to-dictate: press key to record, release to transcribe and paste text.
+- Hold duration is controlled by key release (no fixed max hold timeout).
 - A user-level daemon managed by systemd for reliable startup.
 
 ## 1) Install dependencies
@@ -33,13 +34,19 @@ This guide assumes the repo is here:
 
 If your path differs, update the keybind and service paths below accordingly.
 
+Template files are available under:
+
+- `examples/hypr/voice-hotkey.bindings.conf`
+- `examples/systemd/voice-hotkey.service`
+- `examples/hypr/voice-hotkey.autostart.conf`
+- `examples/hypr/voice-commands.json`
+
 ## 3) Configure Hyprland binds (press/release)
 
-Create a user override file:
+On Omarchy, add binds directly to your user overrides file (or copy from `examples/hypr/voice-hotkey.bindings.conf`):
 
 ```bash
-mkdir -p ~/.config/hypr/conf.d
-$EDITOR ~/.config/hypr/conf.d/voice-hotkey.conf
+$EDITOR ~/.config/hypr/bindings.conf
 ```
 
 Add:
@@ -57,6 +64,8 @@ bindr = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-h
 bind = SUPER, B, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-language
 ```
 
+If you prefer a separate file under `~/.config/hypr/conf.d/`, make sure your `~/.config/hypr/hyprland.conf` explicitly sources it.
+
 Reload Hyprland:
 
 ```bash
@@ -72,7 +81,7 @@ mkdir -p ~/.config/systemd/user
 $EDITOR ~/.config/systemd/user/voice-hotkey.service
 ```
 
-Use:
+Use (or start from `examples/systemd/voice-hotkey.service`):
 
 ```ini
 [Unit]
@@ -99,14 +108,37 @@ systemctl --user enable --now voice-hotkey.service
 systemctl --user status voice-hotkey.service --no-pager
 ```
 
+Sync current Wayland session vars into user systemd (recommended):
+
+```bash
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS HYPRLAND_INSTANCE_SIGNATURE
+systemctl --user restart voice-hotkey.service
+```
+
+Make it persistent across reboot/login by adding this to `~/.config/hypr/autostart.conf` (or copy from `examples/hypr/voice-hotkey.autostart.conf`):
+
+```conf
+exec-once = dbus-update-activation-environment --systemd --all
+exec-once = systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS HYPRLAND_INSTANCE_SIGNATURE
+exec-once = systemctl --user restart voice-hotkey.service
+```
+
 ## 5) Quick verification
 
-Manual smoke test:
+Manual smoke test (command path):
 
 ```bash
 /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-start
 sleep 1
 /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-stop
+```
+
+Manual smoke test (dictation path):
+
+```bash
+/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-start
+sleep 1
+/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-stop
 ```
 
 Check logs:
@@ -125,6 +157,13 @@ Current allowlist includes:
 
 If speech does not match this allowlist, the command path intentionally does nothing.
 
+Optional private overrides:
+
+- Create `~/.config/hypr/voice-commands.json` from `examples/hypr/voice-commands.json`.
+- Entries in this file are matched first.
+- `voice_hotkey/commands.py` contains optional local fallback examples if you prefer code-defined commands.
+- File changes are auto-reloaded by the daemon.
+
 ## 7) Useful environment overrides
 
 You can tune behavior via env vars in the service file:
@@ -134,7 +173,6 @@ Environment=VOICE_COMMAND_MODEL=tiny
 Environment=VOICE_DICTATE_MODEL=medium
 Environment=VOICE_DEVICE=cuda,cpu
 Environment=VOICE_COMPUTE_TYPE=float16
-Environment=VOICE_MAX_HOLD_SECONDS=15
 Environment=VOICE_DAEMON_START_DELAY=0.05
 ```
 
@@ -149,7 +187,12 @@ systemctl --user restart voice-hotkey.service
 
 - `No speech detected`: check microphone battery, mute state, and active source.
 - `Voice daemon unavailable`: restart service and verify socket at `~/.local/state/voice-hotkey.sock`.
-- Paste failures: verify `wl-copy` is installed and Hyprland is active in the current session.
+- Paste failures (`Clipboard write failed rc=1`): import Wayland vars into user systemd and restart service:
+
+```bash
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS HYPRLAND_INSTANCE_SIGNATURE
+systemctl --user restart voice-hotkey.service
+```
 - Model load errors on GPU: verify your CUDA/cuDNN runtime setup for `faster-whisper`.
 
 ## Upgrade workflow

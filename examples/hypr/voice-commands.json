@@ -1,0 +1,70 @@
+[
+  {
+    "label": "Workspace 1",
+    "pattern": "^(?=.*\\b(workspace|tyotila|työtila)\\b)(?=.*\\b(one|1|yksi|ykkonen|ykkönen)\\b).*$",
+    "argv": [
+      "hyprctl",
+      "dispatch",
+      "workspace",
+      "1"
+    ]
+  },
+  {
+    "label": "Workspace 2",
+    "pattern": "^(?=.*\\b(workspace|tyotila|työtila)\\b)(?=.*\\b(two|2|kaksi|kakkonen)\\b).*$",
+    "argv": [
+      "hyprctl",
+      "dispatch",
+      "workspace",
+      "2"
+    ]
+  },
+  {
+    "label": "Volume Up",
+    "pattern": "^(volume up|((laita )?(aani|ääni)(ta)? )?kovemmalle|.*(kovem|kuvem).*|.*lisää.*(ääni|ääntä|aani).*|louder|william up|volyum up)$",
+    "argv": [
+      "pamixer",
+      "-i",
+      "5"
+    ]
+  },
+  {
+    "label": "Volume Down",
+    "pattern": "^(volume down|((laita )?(aani|ääni)(ta)? )?hiljemmalle|.*hil(jem|jim|imm).*|lower|william down|volyum down|hyviemmalle)$",
+    "argv": [
+      "pamixer",
+      "-d",
+      "5"
+    ]
+  },
+  {
+    "label": "Lock Screen",
+    "pattern": "^(lock( screen)?|lukitse( naytto| näyttö)?|.*\\block\\b.*)$",
+    "argv": [
+      "loginctl",
+      "lock-session"
+    ]
+  },
+  {
+    "label": "Launch ARC Raiders",
+    "pattern": "^((open|launch|start|run|play) )?(arc ?raiders|arc ?riders|arcraiders|arcriders|arcader|arced|our creators|or creators|are creators)$",
+    "argv": [
+      "hyprctl",
+      "dispatch",
+      "exec",
+      "[workspace 3 silent] steam steam://rungameid/1808500"
+    ],
+    "enabled": false
+  },
+  {
+    "label": "Open Obsidian",
+    "pattern": "^((open|launch|start) )?obsidian$",
+    "argv": [
+      "hyprctl",
+      "dispatch",
+      "exec",
+      "uwsm-app -- obsidian"
+    ],
+    "enabled": false
+  }
+]
