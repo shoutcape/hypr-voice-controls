@@ -30,7 +30,7 @@ Related: [[Hyprland]] [[PipeWire]] [[Systemd User Services]]
 
 - Runtime command handler: `/home/shoutcape/.local/bin/voice-hotkey.py`
 - Active desktop keybinds: `/home/shoutcape/.config/hypr/bindings.conf`
-- Tracked Omarchy copy of binds: `/home/shoutcape/omarchy-config/omarchy-config/config/user/hypr/bindings.conf`
+- Tracked Omarchy copy of binds: `/home/shoutcape/Github/omarchy-config/omarchy-config/config/user/hypr/bindings.conf`
 
 # Currently implemented voice commands
 

@@ -1,6 +1,8 @@
-# Voice Hotkey Local Workflow
+# Hyper Voice Controls
 
 Local git workflow to snapshot and restore active voice-control files.
+
+The repository is the source of truth for all tracked files. Live paths are symlinked to repo files.
 
 ## Tracked live files
 
@@ -11,18 +13,29 @@ Local git workflow to snapshot and restore active voice-control files.
 ## Repo layout
 
 - `live/...` mirrors the live filesystem paths.
-- `scripts/snapshot.sh` copies current live files into `live/...`.
-- `scripts/restore.sh` copies files from `live/...` back to live locations.
+- `scripts/snapshot.sh` verifies all live paths are symlinked to repo files.
+- `scripts/restore.sh` creates/refreshes symlinks from live paths to repo files.
+
+## Tracked files
+
+- `live/.local/bin/voice-hotkey.py`
+- `live/Documents/Obsidian Notes/Research/OpenCode/Voice Commands/getting-started.md`
 
 ## Daily workflow
 
-1. Pull current state into repo:
+1. Restore symlink and tracked files to live paths:
+
+```bash
+./scripts/restore.sh
+```
+
+2. Verify symlinks are correct:
 
 ```bash
 ./scripts/snapshot.sh
 ```
 
-2. Review and commit:
+3. Review and commit:
 
 ```bash
 git status
@@ -31,13 +44,15 @@ git add -A
 git commit -m "voice: <what changed>"
 ```
 
-3. If needed, restore tracked files back to live paths:
+4. Edit tracked files in repo paths:
 
 ```bash
-./scripts/restore.sh
+$EDITOR "live/.local/bin/voice-hotkey.py"
+$EDITOR "live/Documents/Obsidian Notes/Research/OpenCode/Voice Commands/getting-started.md"
 ```
 
 ## Notes
 
 - This repo is local-only by default.
 - Paths with spaces are handled by the scripts.
+- All live tracked paths resolve to repo files via symlink.
