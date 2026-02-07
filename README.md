@@ -1,35 +1,29 @@
 # Hypr Voice Controls
 
-Local git workflow to snapshot and restore active voice-control files.
-
-The repository is the source of truth for all tracked files. Live paths are symlinked to repo files.
-
-## Tracked live files
-
-- `~/.local/bin/voice-hotkey.py`
-- `~/.config/hypr/bindings.conf`
-- `~/Documents/Obsidian Notes/Research/OpenCode/Voice Commands/getting-started.md`
+Repository-only workflow for voice control script and docs.
 
 ## Repo layout
 
-- `live/...` mirrors the live filesystem paths.
-- `scripts/snapshot.sh` verifies all live paths are symlinked to repo files.
-- `scripts/restore.sh` creates/refreshes symlinks from live paths to repo files.
+- `voice-hotkey.py` is the runtime script.
+- `getting-started.md` is the implementation and testing note.
+- `scripts/snapshot.sh` validates there are no legacy symlinks in old live paths.
+- `scripts/restore.sh` is a compatibility check script (no symlink creation).
 
 ## Tracked files
 
-- `live/.local/bin/voice-hotkey.py`
-- `live/Documents/Obsidian Notes/Research/OpenCode/Voice Commands/getting-started.md`
+- `voice-hotkey.py`
+- `getting-started.md`
 
 ## Daily workflow
 
-1. Restore symlink and tracked files to live paths:
+1. Edit files directly in this repository:
 
 ```bash
-./scripts/restore.sh
+$EDITOR "voice-hotkey.py"
+$EDITOR "getting-started.md"
 ```
 
-2. Verify symlinks are correct:
+2. Verify no legacy symlinks remain:
 
 ```bash
 ./scripts/snapshot.sh
@@ -44,15 +38,25 @@ git add -A
 git commit -m "voice: <what changed>"
 ```
 
-4. Edit tracked files in repo paths:
-
-```bash
-$EDITOR "live/.local/bin/voice-hotkey.py"
-$EDITOR "live/Documents/Obsidian Notes/Research/OpenCode/Voice Commands/getting-started.md"
-```
-
 ## Notes
 
 - This repo is local-only by default.
 - Paths with spaces are handled by the scripts.
-- All live tracked paths resolve to repo files via symlink.
+- Hyprland binds should point directly to `voice-hotkey.py` in this repo.
+
+## New system setup
+
+- Required binary: `ffmpeg`
+- Optional binaries: `hyprctl`, `wl-copy`, `notify-send`, `zenity`
+- Python deps: `faster-whisper` (+ CUDA wheels if using GPU)
+
+Environment overrides:
+
+```bash
+export VOICE_COMMAND_MODEL=tiny
+export VOICE_DICTATE_MODEL=medium
+export VOICE_DEVICE="cuda,cpu"
+export VOICE_COMPUTE_TYPE=float16
+export VOICE_AUDIO_BACKEND=pulse
+export VOICE_AUDIO_SOURCE=default
+```

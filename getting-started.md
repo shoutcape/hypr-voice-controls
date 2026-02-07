@@ -28,7 +28,7 @@ Related: [[Hyprland]] [[PipeWire]] [[Systemd User Services]]
 
 # Evidence used
 
-- Runtime command handler: `/home/shoutcape/.local/bin/voice-hotkey.py`
+- Runtime command handler: `/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py`
 - Active desktop keybinds: `/home/shoutcape/.config/hypr/bindings.conf`
 - Tracked Omarchy copy of binds: `/home/shoutcape/Github/omarchy-config/omarchy-config/config/user/hypr/bindings.conf`
 

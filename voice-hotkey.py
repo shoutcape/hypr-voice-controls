@@ -1,4 +1,4 @@
-#!/home/shoutcape/.venvs/voice/bin/python
+#!/usr/bin/env python3
 import ctypes
 import argparse
 import json
@@ -16,22 +16,45 @@ import time
 from pathlib import Path
 
 
-AUDIO_SECONDS = 4
-COMMAND_MODEL_NAME = "tiny"
-DICTATE_MODEL_NAME = "medium"
-DEVICE = "cuda"
-COMPUTE_TYPE = "float16"
+def env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+AUDIO_SECONDS = env_int("VOICE_AUDIO_SECONDS", 4)
+COMMAND_MODEL_NAME = os.environ.get("VOICE_COMMAND_MODEL", "tiny")
+DICTATE_MODEL_NAME = os.environ.get("VOICE_DICTATE_MODEL", "medium")
+DEVICE_CANDIDATES = [d.strip() for d in os.environ.get("VOICE_DEVICE", "cuda,cpu").split(",") if d.strip()]
+COMPUTE_TYPE_OVERRIDE = os.environ.get("VOICE_COMPUTE_TYPE")
+AUDIO_BACKEND = os.environ.get("VOICE_AUDIO_BACKEND", "pulse")
+AUDIO_SOURCE = os.environ.get("VOICE_AUDIO_SOURCE", "default")
 LOG_PATH = Path.home() / ".local" / "state" / "voice-hotkey.log"
 SOCKET_PATH = Path.home() / ".local" / "state" / "voice-hotkey.sock"
-DICTATE_SECONDS = 6
-MAX_HOLD_SECONDS = 15
+DICTATE_SECONDS = env_int("VOICE_DICTATE_SECONDS", 6)
+MAX_HOLD_SECONDS = env_int("VOICE_MAX_HOLD_SECONDS", 15)
 LANGUAGE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-language"
 DICTATE_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-dictate.json"
 COMMAND_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-command.json"
-DAEMON_CONNECT_TIMEOUT = 0.4
-DAEMON_RESPONSE_TIMEOUT = 180
-DAEMON_START_RETRIES = 40
-DAEMON_START_DELAY = 0.1
+DAEMON_CONNECT_TIMEOUT = env_float("VOICE_DAEMON_CONNECT_TIMEOUT", 0.4)
+DAEMON_RESPONSE_TIMEOUT = env_int("VOICE_DAEMON_RESPONSE_TIMEOUT", 180)
+DAEMON_START_RETRIES = env_int("VOICE_DAEMON_START_RETRIES", 40)
+DAEMON_START_DELAY = env_float("VOICE_DAEMON_START_DELAY", 0.1)
+VENV_PYTHON = Path.home() / ".venvs" / "voice" / "bin" / "python"
 
 COMMANDS = [
     (
@@ -78,6 +101,31 @@ def setup_logger() -> logging.Logger:
 
 LOGGER = setup_logger()
 WHISPER_MODELS = {}
+
+
+def write_private_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+
+
+def validate_environment() -> bool:
+    required_tools = ["ffmpeg"]
+    missing_required = [tool for tool in required_tools if not shutil.which(tool)]
+    if missing_required:
+        LOGGER.error("Missing required tools: %s", ", ".join(missing_required))
+        notify("Voice", f"Missing required tools: {', '.join(missing_required)}")
+        return False
+
+    optional_tools = ["hyprctl", "wl-copy", "notify-send", "zenity"]
+    missing_optional = [tool for tool in optional_tools if not shutil.which(tool)]
+    if missing_optional:
+        LOGGER.warning("Missing optional tools: %s", ", ".join(missing_optional))
+
+    return True
 
 
 def ensure_cuda_runtime_paths() -> None:
@@ -206,9 +254,9 @@ def record_clip(output_path: Path, duration_seconds: int = AUDIO_SECONDS) -> boo
         "-loglevel",
         "error",
         "-f",
-        "pulse",
+        AUDIO_BACKEND,
         "-i",
-        "default",
+        AUDIO_SOURCE,
         "-t",
         str(duration_seconds),
         "-ac",
@@ -236,18 +284,51 @@ def match_command(clean_text: str):
     return fuzzy_allowlist_match(clean_text)
 
 
+def compute_type_for_device(device: str) -> str:
+    if COMPUTE_TYPE_OVERRIDE:
+        return COMPUTE_TYPE_OVERRIDE
+    if device.startswith("cuda"):
+        return "float16"
+    return "int8"
+
+
 def get_whisper_model(model_name: str):
     global WHISPER_MODELS
-    model = WHISPER_MODELS.get(model_name)
-    if model is None:
-        ensure_cuda_runtime_paths()
-        from faster_whisper import WhisperModel
+    from faster_whisper import WhisperModel
 
-        LOGGER.info("Loading Whisper model name=%s device=%s compute_type=%s", model_name, DEVICE, COMPUTE_TYPE)
-        model = WhisperModel(model_name, device=DEVICE, compute_type=COMPUTE_TYPE)
-        WHISPER_MODELS[model_name] = model
-        LOGGER.info("Whisper model loaded name=%s", model_name)
-    return model
+    errors = []
+    for device in DEVICE_CANDIDATES:
+        compute_type = compute_type_for_device(device)
+        key = (model_name, device, compute_type)
+        model = WHISPER_MODELS.get(key)
+        if model is not None:
+            return model
+
+        try:
+            if device.startswith("cuda"):
+                ensure_cuda_runtime_paths()
+
+            LOGGER.info(
+                "Loading Whisper model name=%s device=%s compute_type=%s",
+                model_name,
+                device,
+                compute_type,
+            )
+            model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            WHISPER_MODELS[key] = model
+            LOGGER.info("Whisper model loaded name=%s device=%s compute_type=%s", model_name, device, compute_type)
+            return model
+        except Exception as exc:
+            errors.append(f"{device}/{compute_type}: {type(exc).__name__}: {exc}")
+            LOGGER.warning(
+                "Whisper model load failed name=%s device=%s compute_type=%s err=%s",
+                model_name,
+                device,
+                compute_type,
+                exc,
+            )
+
+    raise RuntimeError(f"Could not load Whisper model '{model_name}' on any device. Attempts: {'; '.join(errors)}")
 
 
 def warm_model(model_name: str) -> None:
@@ -325,8 +406,7 @@ def get_saved_dictation_language() -> str:
 
 
 def set_saved_dictation_language(language: str) -> None:
-    LANGUAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LANGUAGE_PATH.write_text(language, encoding="utf-8")
+    write_private_text(LANGUAGE_PATH, language)
 
 
 def toggle_saved_dictation_language() -> str:
@@ -467,9 +547,9 @@ def start_press_hold_dictation() -> int:
         "-loglevel",
         "error",
         "-f",
-        "pulse",
+        AUDIO_BACKEND,
         "-i",
-        "default",
+        AUDIO_SOURCE,
         "-t",
         str(MAX_HOLD_SECONDS),
         "-ac",
@@ -479,7 +559,12 @@ def start_press_hold_dictation() -> int:
         str(audio_path),
     ]
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+    except FileNotFoundError:
+        notify("Voice", "ffmpeg not found")
+        LOGGER.error("Could not start dictation recorder: ffmpeg not found")
+        return 1
     state = {
         "pid": proc.pid,
         "tmpdir": tmpdir,
@@ -487,7 +572,7 @@ def start_press_hold_dictation() -> int:
         "language": language,
         "started_at": time.time(),
     }
-    DICTATE_STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
+    write_private_text(DICTATE_STATE_PATH, json.dumps(state))
     notify("Voice", f"Recording... release keys to transcribe ({language})")
     LOGGER.info("Voice hotkey dictate_start pid=%s language=%s audio=%s", proc.pid, language, audio_path)
     return 0
@@ -508,9 +593,9 @@ def start_press_hold_command() -> int:
         "-loglevel",
         "error",
         "-f",
-        "pulse",
+        AUDIO_BACKEND,
         "-i",
-        "default",
+        AUDIO_SOURCE,
         "-t",
         str(MAX_HOLD_SECONDS),
         "-ac",
@@ -520,7 +605,12 @@ def start_press_hold_command() -> int:
         str(audio_path),
     ]
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+    except FileNotFoundError:
+        notify("Voice", "ffmpeg not found")
+        LOGGER.error("Could not start command recorder: ffmpeg not found")
+        return 1
     state = {
         "pid": proc.pid,
         "tmpdir": tmpdir,
@@ -528,7 +618,7 @@ def start_press_hold_command() -> int:
         "language": language,
         "started_at": time.time(),
     }
-    COMMAND_STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
+    write_private_text(COMMAND_STATE_PATH, json.dumps(state))
     notify("Voice", f"Listening for command ({language})... release keys to run")
     LOGGER.info("Voice hotkey command_start pid=%s language=%s audio=%s", proc.pid, language, audio_path)
     return 0
@@ -845,8 +935,10 @@ def start_daemon() -> None:
     if SOCKET_PATH.exists():
         SOCKET_PATH.unlink(missing_ok=True)
 
+    runtime_python = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
+
     subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "--daemon"],
+        [runtime_python, str(Path(__file__).resolve()), "--daemon"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -882,6 +974,9 @@ def request_daemon(input_mode: str, *, auto_start: bool = True) -> int:
 
 
 def run_daemon() -> int:
+    if not validate_environment():
+        return 1
+
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
     if SOCKET_PATH.exists():
         SOCKET_PATH.unlink(missing_ok=True)
@@ -895,6 +990,10 @@ def run_daemon() -> int:
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
         server.bind(str(SOCKET_PATH))
+        try:
+            os.chmod(SOCKET_PATH, 0o600)
+        except Exception as exc:
+            LOGGER.warning("Could not chmod daemon socket: %s", exc)
         server.listen(8)
         LOGGER.info("Voice hotkey daemon listening socket=%s", SOCKET_PATH)
 
