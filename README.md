@@ -1,4 +1,4 @@
-# Hyper Voice Controls
+# Hypr Voice Controls
 
 Local git workflow to snapshot and restore active voice-control files.
 
