@@ -1,141 +1,163 @@
----
-title: Voice Commands Getting Started (Current Implementation Audit)
-tags: [arch-linux, omarchy, hyprland, voice-control, faster-whisper, nvidia]
-sources:
-  - title: faster-whisper
-    url: https://github.com/SYSTRAN/faster-whisper
-  - title: CTranslate2 installation
-    url: https://opennmt.net/CTranslate2/installation.html
-  - title: Hyprland binds docs
-    url: https://wiki.hypr.land/Configuring/Binds/
-  - title: Hyprland dispatchers docs
-    url: https://wiki.hypr.land/Configuring/Dispatchers/
-  - title: ArchWiki PipeWire
-    url: https://wiki.archlinux.org/title/PipeWire
-  - title: OpenAI Whisper repository
-    url: https://github.com/openai/whisper
-date: 2026-02-07
-status: active
----
+# Getting Started
 
-# Scope
+This guide sets up Hypr Voice Controls from scratch with the current architecture in this repo.
 
-This note replaces older architecture-first research and documents what is actually implemented right now on this machine.
+## What you get
 
-Context note: [[OpenCode/Voice Commands/2026-02-07 voice commands for omarchy arch linux]] was removed because it mixed future recommendations with active state.
+- Hold-to-command: press key to record, release to transcribe and run an allowlisted action.
+- Hold-to-dictate: press key to record, release to transcribe and paste text.
+- A user-level daemon managed by systemd for reliable startup.
 
-Related: [[Hyprland]] [[PipeWire]] [[Systemd User Services]]
+## 1) Install dependencies
 
-# Evidence used
-
-- Runtime command handler: `/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py`
-- Active desktop keybinds: `/home/shoutcape/.config/hypr/bindings.conf`
-- Tracked Omarchy copy of binds: `/home/shoutcape/Github/omarchy-config/omarchy-config/config/user/hypr/bindings.conf`
-
-# Currently implemented voice commands
-
-## Hotkeys and modes
-
-- `code:194` press: start command capture (`--input command-start`)
-- `code:194` release: stop capture + transcribe + execute match (`--input command-stop`)
-- `code:195` press: start dictation capture (`--input dictate-start`)
-- `code:195` release: stop capture + transcribe + paste text (`--input dictate-stop`)
-- `code:197` press: open language chooser for dictation (`--input dictate-language`)
-
-## Command allowlist
-
-- `workspace one`, `workspace 1`, `työtila yksi`, `tyotila yksi`, `työtila ykkönen`, `tyotila ykkonen` -> `hyprctl dispatch workspace 1`
-- `workspace two`, `workspace 2`, `työtila kaksi`, `tyotila kaksi`, `työtila kakkonen` -> `hyprctl dispatch workspace 2`
-- `volume up`, `ääni kovemmalle`, `aani kovemmalle`, `laita ääntä kovemmalle` (+ fuzzy/mishear variants) -> `pamixer -i 5`
-- `volume down`, `ääni hiljemmalle`, `aani hiljemmalle`, `laita ääntä hiljemmalle` (+ fuzzy/mishear variants) -> `pamixer -d 5`
-- `lock`, `lock screen`, `lukitse näyttö`, `lukitse naytto` -> `loginctl lock-session`
-
-## Matching and safety behavior
-
-- Transcript is normalized (lowercase, punctuation stripped, polite prefixes removed).
-- Match flow is regex allowlist first, then narrow fuzzy fallback.
-- Execution uses fixed argv via `subprocess.run([...], timeout=8)`.
-- No shell interpolation and no `shell=True` in command execution path.
-
-# Pipeline behavior
-
-- Audio capture: `ffmpeg` on Pulse/PipeWire default source, mono `16kHz`, hold cap `15s`.
-- STT engine: `faster_whisper` hybrid models, device `cuda`, compute `float16`:
-  - command mode: `tiny`
-  - dictation mode: `medium`
-- Dictation language: saved `fi`/`en`; command mode also uses the selected saved language (no auto-detect).
-- Dictation output: `wl-copy` then Hyprland `sendshortcut` paste attempts.
-- Logging: `/home/shoutcape/.local/state/voice-hotkey.log`.
-
-# Model A/B test phrases
-
-Use these exact phrases so logs are easy to compare between model changes.
-
-## Command mode phrases (`code:194` hold/release)
-
-- English:
-  - `workspace one`
-  - `workspace two`
-  - `volume up`
-  - `volume down`
-  - `lock screen`
-- Finnish:
-  - `työtila yksi`
-  - `työtila kaksi`
-  - `ääni kovemmalle`
-  - `ääni hiljemmalle`
-  - `lukitse näyttö`
-This is a dictation latency test
-Volume down, volume up and lock screen are command phrases.
-How quickly does this appear in the text box?
-Tämä on Sonelun viivetesti.
-Äänikovemmalle ja äänihiljemmalle ovat komentolauseita.
-kuinka nopeasti tämä ilmestyy tekstikenttään.
-## Dictation mode phrases (`code:195` hold/release)
-
-- English:
-  - `This is a dictation latency test.`
-  - `Volume down, volume up, and lock screen are command phrases.`
-  - `How quickly does this appear in the text box?`
-- Finnish:
-  - `Tama on sanelun viivetesti.`
-  - `Aani kovemmalle ja aani hiljemmalle ovat komentolauseita.`
-  - `Kuinka nopeasti tama ilmestyy tekstikenttaan?`
-
-## Log check commands
+On Arch/Omarchy:
 
 ```bash
-tail -n 120 /home/shoutcape/.local/state/voice-hotkey.log
+sudo pacman -S --needed ffmpeg pamixer libnotify wl-clipboard
+sudo pacman -S --needed zenity
 ```
+
+Python environment:
 
 ```bash
-rg "Input source=voice_hold|Dictation hold|Voice hotkey end status|Paste attempt" /home/shoutcape/.local/state/voice-hotkey.log
+python -m venv ~/.venvs/voice
+~/.venvs/voice/bin/pip install -U pip
+~/.venvs/voice/bin/pip install faster-whisper
 ```
 
-# Tradeoffs
+## 2) Verify repository path
 
-- Current hotkey design is low-risk and deterministic but not hands-free.
-- Command set is small and reliable, but limited to desktop primitives (workspace, volume, lock).
-- GPU Whisper improves accuracy/latency, but adds CUDA runtime coupling and dependency complexity.
-- Fuzzy matching improves usability, but can increase edge-case false positives if expanded too far.
-# Recommendation
+This guide assumes the repo is here:
 
-Keep this hotkey-driven architecture as the canonical baseline and grow command coverage incrementally. Prioritize:
+`/home/shoutcape/Github/hypr-voice-controls`
 
-1. Add explicit confirmation for dangerous actions before expanding command scope.
-2. Add lightweight cooldown/debounce controls to reduce repeated triggers.
-3. Keep command routing deterministic (allowlist phrase -> fixed argv) as a hard constraint.
+If your path differs, update the keybind and service paths below accordingly.
 
-# Uncertainty
+## 3) Configure Hyprland binds (press/release)
 
-- The active implementation is file-based and user-session based; no systemd user service was found for voice runtime supervision.
-- No wake-word layer was found in active config/scripts; if one exists outside these paths, it was not visible in this audit.
+Create a user override file:
 
-# Sources
+```bash
+mkdir -p ~/.config/hypr/conf.d
+$EDITOR ~/.config/hypr/conf.d/voice-hotkey.conf
+```
 
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-- [CTranslate2 installation](https://opennmt.net/CTranslate2/installation.html)
-- [Hyprland binds docs](https://wiki.hypr.land/Configuring/Binds/)
-- [Hyprland dispatchers docs](https://wiki.hypr.land/Configuring/Dispatchers/)
-- [ArchWiki: PipeWire](https://wiki.archlinux.org/title/PipeWire)
-- [OpenAI Whisper repository](https://github.com/openai/whisper)
+Add:
+
+```conf
+# Voice command: hold SUPER+V, release to execute
+bind  = SUPER, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-start
+bindr = SUPER, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-stop
+
+# Dictation: hold SUPER+SHIFT+V, release to paste
+bind  = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-start
+bindr = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-stop
+
+# Toggle dictation language (fi/en)
+bind = SUPER, B, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-language
+```
+
+Reload Hyprland:
+
+```bash
+hyprctl reload
+```
+
+## 4) Create and enable the user service
+
+Create service file:
+
+```bash
+mkdir -p ~/.config/systemd/user
+$EDITOR ~/.config/systemd/user/voice-hotkey.service
+```
+
+Use:
+
+```ini
+[Unit]
+Description=Voice hotkey daemon (Whisper + Hyprland)
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.venvs/voice/bin/python %h/Github/hypr-voice-controls/voice-hotkey.py --daemon
+Restart=on-failure
+RestartSec=1
+Environment=VOICE_AUDIO_BACKEND=pulse
+Environment=VOICE_AUDIO_SOURCE=default
+
+[Install]
+WantedBy=default.target
+```
+
+Enable and start:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now voice-hotkey.service
+systemctl --user status voice-hotkey.service --no-pager
+```
+
+## 5) Quick verification
+
+Manual smoke test:
+
+```bash
+/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-start
+sleep 1
+/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-stop
+```
+
+Check logs:
+
+```bash
+rg "Voice hotkey end status|Input source|Dictation hold|Paste attempt" ~/.local/state/voice-hotkey.log
+```
+
+## 6) Supported command actions
+
+Current allowlist includes:
+
+- workspace 1/2 (`hyprctl dispatch workspace 1|2`)
+- volume up/down (`pamixer -i 5` / `pamixer -d 5`)
+- lock screen (`loginctl lock-session`)
+
+If speech does not match this allowlist, the command path intentionally does nothing.
+
+## 7) Useful environment overrides
+
+You can tune behavior via env vars in the service file:
+
+```ini
+Environment=VOICE_COMMAND_MODEL=tiny
+Environment=VOICE_DICTATE_MODEL=medium
+Environment=VOICE_DEVICE=cuda,cpu
+Environment=VOICE_COMPUTE_TYPE=float16
+Environment=VOICE_MAX_HOLD_SECONDS=15
+Environment=VOICE_DAEMON_START_DELAY=0.05
+```
+
+After edits:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart voice-hotkey.service
+```
+
+## Troubleshooting
+
+- `No speech detected`: check microphone battery, mute state, and active source.
+- `Voice daemon unavailable`: restart service and verify socket at `~/.local/state/voice-hotkey.sock`.
+- Paste failures: verify `wl-copy` is installed and Hyprland is active in the current session.
+- Model load errors on GPU: verify your CUDA/cuDNN runtime setup for `faster-whisper`.
+
+## Upgrade workflow
+
+After pulling repo changes:
+
+```bash
+cd /home/shoutcape/Github/hypr-voice-controls
+systemctl --user restart voice-hotkey.service
+systemctl --user status voice-hotkey.service --no-pager
+```
