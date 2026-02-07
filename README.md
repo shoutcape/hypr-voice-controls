@@ -123,7 +123,3 @@ rg "Voice hotkey end status|Input source|Dictation hold|Paste attempt" ~/.local/
 ```bash
 python3 -m py_compile voice-hotkey.py voice_hotkey/*.py
 ```
-
-- helper scripts:
-  - `scripts/snapshot.sh`
-  - `scripts/restore.sh`
