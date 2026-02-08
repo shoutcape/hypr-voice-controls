@@ -4,7 +4,7 @@ This guide sets up Hypr Voice Controls from scratch with the current architectur
 
 ## What you get
 
-- Hold-to-command: press key to record, release to transcribe and run an allowlisted action.
+- Hold-to-command: press key to record, release to transcribe and run a configured action.
 - Hold-to-dictate: press key to record, release to transcribe and paste text.
 - Hold duration is controlled by key release (no fixed max hold timeout).
 - A user-level daemon managed by systemd for reliable startup.
@@ -153,13 +153,15 @@ rg "Voice hotkey end status|Input source|Dictation hold|Paste attempt" ~/.local/
 
 ## 6) Supported command actions
 
-Current allowlist includes:
+The command path uses your JSON command map (`~/.config/hypr/voice-commands.json`).
+
+The default example file includes actions like:
 
 - workspace 1/2 (`hyprctl dispatch workspace 1|2`)
 - volume up/down (`pamixer -i 5` / `pamixer -d 5`)
 - lock screen (`loginctl lock-session`)
 
-If speech does not match this allowlist, the command path intentionally does nothing.
+If speech does not match any configured pattern, the command path intentionally does nothing.
 
 Optional private overrides:
 
@@ -182,7 +184,9 @@ Environment=VOICE_DICTATE_MODEL_FI=medium
 Environment=VOICE_DEVICE=cuda,cpu
 Environment=VOICE_COMPUTE_TYPE=float16
 Environment=VOICE_DAEMON_START_DELAY=0.05
+Environment=VOICE_DAEMON_MAX_REQUEST_BYTES=8192
 Environment=VOICE_LOG_TRANSCRIPTS=false
+Environment=VOICE_LOG_COMMAND_OUTPUT_MAX=300
 Environment=VOICE_STATE_MAX_AGE_SECONDS=900
 ```
 

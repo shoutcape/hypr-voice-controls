@@ -2,7 +2,7 @@
 
 Voice hotkey daemon for Hyprland with two paths:
 
-- hold-to-command: transcribe speech and execute an allowlisted desktop action
+- hold-to-command: transcribe speech and execute a configured desktop action
 - hold-to-dictate: transcribe speech and paste text into the focused app
 - press/hold capture runs until key release (no fixed max hold timeout)
 
@@ -41,7 +41,7 @@ For private spoken-command definitions, copy `examples/hypr/voice-commands.json`
 - UNIX socket daemon for low-latency repeated hotkey calls
 - press/release command and dictation flows (`command-start/stop`, `dictate-start/stop`)
 - configurable command map loaded from `~/.config/hypr/voice-commands.json` (shell-free argv execution)
-- separate command and dictation STT models (`small` and `medium` by default)
+- separate command and dictation STT models with per-language overrides (`small.en`/`small` and `medium.en`/`medium` by default)
 - cached model loading and background dictation warmup
 - language toggle (`fi`/`en`) persisted under `~/.local/state/voice-hotkey-language`
 
@@ -72,7 +72,9 @@ export VOICE_DEVICE="cuda,cpu"
 export VOICE_COMPUTE_TYPE=float16
 export VOICE_AUDIO_BACKEND=pulse
 export VOICE_AUDIO_SOURCE=default
+export VOICE_DAEMON_MAX_REQUEST_BYTES=8192
 export VOICE_LOG_TRANSCRIPTS=false
+export VOICE_LOG_COMMAND_OUTPUT_MAX=300
 export VOICE_STATE_MAX_AGE_SECONDS=900
 ```
 
