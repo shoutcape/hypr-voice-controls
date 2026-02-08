@@ -22,9 +22,25 @@ def env_float(name: str, default: float) -> float:
         return default
 
 
+def env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 AUDIO_SECONDS = env_int("VOICE_AUDIO_SECONDS", 4)
-COMMAND_MODEL_NAME = os.environ.get("VOICE_COMMAND_MODEL", "tiny")
+COMMAND_MODEL_NAME = os.environ.get("VOICE_COMMAND_MODEL", "small")
 DICTATE_MODEL_NAME = os.environ.get("VOICE_DICTATE_MODEL", "medium")
+COMMAND_MODEL_NAME_EN = os.environ.get("VOICE_COMMAND_MODEL_EN", "small.en")
+COMMAND_MODEL_NAME_FI = os.environ.get("VOICE_COMMAND_MODEL_FI", COMMAND_MODEL_NAME)
+DICTATE_MODEL_NAME_EN = os.environ.get("VOICE_DICTATE_MODEL_EN", "medium.en")
+DICTATE_MODEL_NAME_FI = os.environ.get("VOICE_DICTATE_MODEL_FI", DICTATE_MODEL_NAME)
 DEVICE_CANDIDATES = [d.strip() for d in os.environ.get("VOICE_DEVICE", "cuda,cpu").split(",") if d.strip()]
 COMPUTE_TYPE_OVERRIDE = os.environ.get("VOICE_COMPUTE_TYPE")
 AUDIO_BACKEND = os.environ.get("VOICE_AUDIO_BACKEND", "pulse")
@@ -35,8 +51,13 @@ DICTATE_SECONDS = env_int("VOICE_DICTATE_SECONDS", 6)
 LANGUAGE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-language"
 DICTATE_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-dictate.json"
 COMMAND_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-command.json"
+LOCK_PATH = Path.home() / ".local" / "state" / "voice-hotkey.lock"
 DAEMON_CONNECT_TIMEOUT = env_float("VOICE_DAEMON_CONNECT_TIMEOUT", 0.4)
 DAEMON_RESPONSE_TIMEOUT = env_int("VOICE_DAEMON_RESPONSE_TIMEOUT", 180)
 DAEMON_START_RETRIES = env_int("VOICE_DAEMON_START_RETRIES", 40)
 DAEMON_START_DELAY = env_float("VOICE_DAEMON_START_DELAY", 0.1)
+DAEMON_MAX_REQUEST_BYTES = env_int("VOICE_DAEMON_MAX_REQUEST_BYTES", 8192)
+STATE_MAX_AGE_SECONDS = env_int("VOICE_STATE_MAX_AGE_SECONDS", 900)
+LOG_TRANSCRIPTS = env_bool("VOICE_LOG_TRANSCRIPTS", False)
+LOG_COMMAND_OUTPUT_MAX = env_int("VOICE_LOG_COMMAND_OUTPUT_MAX", 300)
 VENV_PYTHON = Path.home() / ".venvs" / "voice" / "bin" / "python"

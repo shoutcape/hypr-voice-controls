@@ -40,8 +40,8 @@ For private spoken-command definitions, copy `examples/hypr/voice-commands.json`
 
 - UNIX socket daemon for low-latency repeated hotkey calls
 - press/release command and dictation flows (`command-start/stop`, `dictate-start/stop`)
-- explicit command allowlist (workspace, volume, lock) with fixed argv execution
-- separate command and dictation STT models (`tiny` and `medium` by default)
+- configurable command map loaded from `~/.config/hypr/voice-commands.json` (shell-free argv execution)
+- separate command and dictation STT models (`small` and `medium` by default)
 - cached model loading and background dictation warmup
 - language toggle (`fi`/`en`) persisted under `~/.local/state/voice-hotkey-language`
 
@@ -62,12 +62,18 @@ python -m venv ~/.venvs/voice
 ## Environment overrides
 
 ```bash
-export VOICE_COMMAND_MODEL=tiny
+export VOICE_COMMAND_MODEL=small
 export VOICE_DICTATE_MODEL=medium
+export VOICE_COMMAND_MODEL_EN=small.en
+export VOICE_COMMAND_MODEL_FI=small
+export VOICE_DICTATE_MODEL_EN=medium.en
+export VOICE_DICTATE_MODEL_FI=medium
 export VOICE_DEVICE="cuda,cpu"
 export VOICE_COMPUTE_TYPE=float16
 export VOICE_AUDIO_BACKEND=pulse
 export VOICE_AUDIO_SOURCE=default
+export VOICE_LOG_TRANSCRIPTS=false
+export VOICE_STATE_MAX_AGE_SECONDS=900
 ```
 
 ## Private spoken commands (Hypr config)

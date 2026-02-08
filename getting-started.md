@@ -95,6 +95,10 @@ Restart=on-failure
 RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
+Environment=VOICE_COMMAND_MODEL_EN=small.en
+Environment=VOICE_COMMAND_MODEL_FI=small
+Environment=VOICE_DICTATE_MODEL_EN=medium.en
+Environment=VOICE_DICTATE_MODEL_FI=medium
 
 [Install]
 WantedBy=default.target
@@ -169,11 +173,17 @@ Optional private overrides:
 You can tune behavior via env vars in the service file:
 
 ```ini
-Environment=VOICE_COMMAND_MODEL=tiny
+Environment=VOICE_COMMAND_MODEL=small
 Environment=VOICE_DICTATE_MODEL=medium
+Environment=VOICE_COMMAND_MODEL_EN=small.en
+Environment=VOICE_COMMAND_MODEL_FI=small
+Environment=VOICE_DICTATE_MODEL_EN=medium.en
+Environment=VOICE_DICTATE_MODEL_FI=medium
 Environment=VOICE_DEVICE=cuda,cpu
 Environment=VOICE_COMPUTE_TYPE=float16
 Environment=VOICE_DAEMON_START_DELAY=0.05
+Environment=VOICE_LOG_TRANSCRIPTS=false
+Environment=VOICE_STATE_MAX_AGE_SECONDS=900
 ```
 
 After edits:

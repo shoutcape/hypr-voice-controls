@@ -7,7 +7,9 @@ from .logging_utils import LOGGER
 
 def write_private_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    os.replace(tmp_path, path)
     try:
         os.chmod(path, 0o600)
     except Exception:

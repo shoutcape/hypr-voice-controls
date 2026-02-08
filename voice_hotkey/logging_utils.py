@@ -1,4 +1,5 @@
 import logging
+import os
 
 from .config import LOG_PATH
 
@@ -14,6 +15,10 @@ def setup_logger() -> logging.Logger:
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+    try:
+        os.chmod(LOG_PATH, 0o600)
+    except Exception:
+        pass
     return logger
 
 

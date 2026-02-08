@@ -1,12 +1,23 @@
 import ctypes
 import os
+import threading
 from pathlib import Path
 
-from .config import COMMAND_MODEL_NAME, COMPUTE_TYPE_OVERRIDE, DEVICE_CANDIDATES, DICTATE_MODEL_NAME
+from .config import (
+    COMMAND_MODEL_NAME,
+    COMMAND_MODEL_NAME_EN,
+    COMMAND_MODEL_NAME_FI,
+    COMPUTE_TYPE_OVERRIDE,
+    DEVICE_CANDIDATES,
+    DICTATE_MODEL_NAME,
+    DICTATE_MODEL_NAME_EN,
+    DICTATE_MODEL_NAME_FI,
+)
 from .logging_utils import LOGGER
 
 
 WHISPER_MODELS: dict[tuple[str, str, str], object] = {}
+WHISPER_MODELS_LOCK = threading.Lock()
 
 
 def ensure_cuda_runtime_paths() -> None:
@@ -65,6 +76,22 @@ def compute_type_for_device(device: str) -> str:
     return "int8"
 
 
+def command_model_name(language: str | None = None) -> str:
+    if language == "en":
+        return COMMAND_MODEL_NAME_EN
+    if language == "fi":
+        return COMMAND_MODEL_NAME_FI
+    return COMMAND_MODEL_NAME
+
+
+def dictation_model_name(language: str | None = None) -> str:
+    if language == "en":
+        return DICTATE_MODEL_NAME_EN
+    if language == "fi":
+        return DICTATE_MODEL_NAME_FI
+    return DICTATE_MODEL_NAME
+
+
 def get_whisper_model(model_name: str):
     from faster_whisper import WhisperModel
 
@@ -72,9 +99,10 @@ def get_whisper_model(model_name: str):
     for device in DEVICE_CANDIDATES:
         compute_type = compute_type_for_device(device)
         key = (model_name, device, compute_type)
-        model = WHISPER_MODELS.get(key)
-        if model is not None:
-            return model
+        with WHISPER_MODELS_LOCK:
+            model = WHISPER_MODELS.get(key)
+            if model is not None:
+                return model
 
         try:
             if device.startswith("cuda"):
@@ -87,7 +115,8 @@ def get_whisper_model(model_name: str):
                 compute_type,
             )
             model = WhisperModel(model_name, device=device, compute_type=compute_type)
-            WHISPER_MODELS[key] = model
+            with WHISPER_MODELS_LOCK:
+                WHISPER_MODELS[key] = model
             LOGGER.info("Whisper model loaded name=%s device=%s compute_type=%s", model_name, device, compute_type)
             return model
         except Exception as exc:
@@ -111,11 +140,12 @@ def warm_model(model_name: str) -> None:
 
 
 def is_model_loaded(model_name: str) -> bool:
-    return any(key[0] == model_name for key in WHISPER_MODELS.keys())
+    with WHISPER_MODELS_LOCK:
+        return any(key[0] == model_name for key in WHISPER_MODELS.keys())
 
 
 def transcribe(audio_path: Path, language: str | None = None, mode: str = "command") -> tuple[str, str, float]:
-    model_name = COMMAND_MODEL_NAME if mode == "command" else DICTATE_MODEL_NAME
+    model_name = command_model_name(language) if mode == "command" else dictation_model_name(language)
     model = get_whisper_model(model_name)
     transcribe_kwargs = {
         "language": language,
@@ -137,11 +167,12 @@ def transcribe(audio_path: Path, language: str | None = None, mode: str = "comma
 
 
 def preload_models() -> None:
-    try:
-        get_whisper_model(COMMAND_MODEL_NAME)
-    except Exception as exc:
-        LOGGER.warning("Command model preload failed: %s", exc)
-
-
-def dictation_model_name() -> str:
-    return DICTATE_MODEL_NAME
+    for model_name in {
+        COMMAND_MODEL_NAME,
+        COMMAND_MODEL_NAME_EN,
+        COMMAND_MODEL_NAME_FI,
+    }:
+        try:
+            get_whisper_model(model_name)
+        except Exception as exc:
+            LOGGER.warning("Model preload failed name=%s err=%s", model_name, exc)

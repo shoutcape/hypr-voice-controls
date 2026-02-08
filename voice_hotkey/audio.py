@@ -26,7 +26,12 @@ def record_clip(output_path: Path, duration_seconds: int = AUDIO_SECONDS) -> boo
         "16000",
         str(output_path),
     ]
-    proc = subprocess.run(cmd, check=False, timeout=duration_seconds + 4, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, check=False, timeout=duration_seconds + 4, capture_output=True, text=True)
+    except Exception as exc:
+        LOGGER.error("Mic capture process failed: %s", exc)
+        return False
+
     if proc.returncode != 0:
         LOGGER.error("Mic capture failed rc=%s stderr=%s", proc.returncode, proc.stderr.strip())
         return False
@@ -68,9 +73,40 @@ def wait_for_pid_exit(pid: int, timeout_seconds: float) -> bool:
     return not pid_alive(pid)
 
 
-def stop_recording_pid(pid: int, label: str) -> None:
+def pid_cmdline(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if not raw:
+            return ""
+        return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+
+
+def pid_cmdline_contains(pid: int, required_substrings: list[str] | None = None) -> bool:
+    if not required_substrings:
+        return True
+
+    cmdline = pid_cmdline(pid)
+    if not cmdline:
+        return False
+    lowered = cmdline.lower()
+    return all(token.lower() in lowered for token in required_substrings)
+
+
+def stop_recording_pid(pid: int, label: str, required_substrings: list[str] | None = None) -> None:
     if not pid_alive(pid):
         LOGGER.info("%s process already exited pid=%s", label, pid)
+        return
+
+    if not pid_cmdline_contains(pid, required_substrings):
+        LOGGER.warning(
+            "%s process identity mismatch; refusing to signal pid=%s required=%s cmdline=%r",
+            label,
+            pid,
+            required_substrings,
+            pid_cmdline(pid),
+        )
         return
 
     try:

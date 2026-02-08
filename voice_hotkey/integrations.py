@@ -2,12 +2,22 @@ import shutil
 import subprocess
 import time
 
+from .config import LOG_COMMAND_OUTPUT_MAX
 from .logging_utils import LOGGER
+
+
+def _truncate(value: str) -> str:
+    if len(value) <= LOG_COMMAND_OUTPUT_MAX:
+        return value
+    return f"{value[:LOG_COMMAND_OUTPUT_MAX]}..."
 
 
 def notify(title: str, body: str) -> None:
     if shutil.which("notify-send"):
-        subprocess.run(["notify-send", "-a", "voice-hotkey", title, body], check=False, timeout=2)
+        try:
+            subprocess.run(["notify-send", "-a", "voice-hotkey", title, body], check=False, timeout=2)
+        except Exception as exc:
+            LOGGER.debug("notify-send failed: %s", exc)
 
 
 def inject_text_into_focused_input(text: str) -> bool:
@@ -41,13 +51,17 @@ def inject_text_into_focused_input(text: str) -> bool:
     ]
 
     for cmd in attempts:
-        proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=3)
+        try:
+            proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=3)
+        except Exception as exc:
+            LOGGER.error("Paste attempt failed cmd=%s err=%s", cmd, exc)
+            continue
         LOGGER.info(
             "Paste attempt cmd=%s rc=%s stdout=%s stderr=%s",
             cmd,
             proc.returncode,
-            proc.stdout.strip(),
-            proc.stderr.strip(),
+            _truncate(proc.stdout.strip()),
+            _truncate(proc.stderr.strip()),
         )
         if proc.returncode == 0:
             return True
@@ -56,13 +70,18 @@ def inject_text_into_focused_input(text: str) -> bool:
 
 
 def run_command(argv: list[str]) -> bool:
-    proc = subprocess.run(argv, check=False, timeout=8, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(argv, check=False, timeout=8, capture_output=True, text=True)
+    except Exception as exc:
+        LOGGER.error("Command execution failed argv=%s err=%s", argv, exc)
+        return False
+
     if proc.returncode != 0:
         LOGGER.error(
             "Command failed rc=%s argv=%s stdout=%s stderr=%s",
             proc.returncode,
             argv,
-            proc.stdout.strip(),
-            proc.stderr.strip(),
+            _truncate(proc.stdout.strip()),
+            _truncate(proc.stderr.strip()),
         )
     return proc.returncode == 0
