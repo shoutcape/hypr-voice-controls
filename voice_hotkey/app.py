@@ -27,10 +27,16 @@ from .config import (
     LOG_TRANSCRIPTS,
     SOCKET_PATH,
     STATE_MAX_AGE_SECONDS,
+    WAKEWORD_ENABLED_DEFAULT,
+    WAKEWORD_STATE_PATH,
+    WAKE_GREETING_ENABLED,
+    WAKE_GREETING_TEXT,
     VENV_PYTHON,
+    DICTATION_INJECTOR,
 )
 from .integrations import inject_text_into_focused_input, notify, run_command
 from .logging_utils import LOGGER
+from .overlay import show_partial
 from .state_utils import get_saved_dictation_language, toggle_saved_dictation_language, write_private_text
 from .stt import dictation_model_name, is_model_loaded, preload_models, transcribe, warm_model
 
@@ -44,6 +50,19 @@ ALLOWED_INPUT_MODES = {
     "dictate-language",
     "command-start",
     "command-stop",
+    "wake-start",
+    "wakeword-enable",
+    "wakeword-disable",
+    "wakeword-toggle",
+    "wakeword-status",
+}
+
+WAKEWORD_INPUT_MODES = {
+    "wake-start",
+    "wakeword-enable",
+    "wakeword-disable",
+    "wakeword-toggle",
+    "wakeword-status",
 }
 
 
@@ -92,6 +111,58 @@ def _recv_json_line(sock: socket.socket) -> dict:
     return json.loads(line.decode("utf-8"))
 
 
+def _read_wakeword_enabled() -> bool:
+    try:
+        payload = json.loads(WAKEWORD_STATE_PATH.read_text(encoding="utf-8"))
+        enabled = payload.get("enabled")
+        if isinstance(enabled, bool):
+            return enabled
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        LOGGER.warning("Could not read wakeword state: %s", exc)
+    return WAKEWORD_ENABLED_DEFAULT
+
+
+def _set_wakeword_enabled(enabled: bool) -> None:
+    state = {
+        "enabled": enabled,
+        "updated_at": time.time(),
+    }
+    write_private_text(WAKEWORD_STATE_PATH, json.dumps(state))
+
+
+def _say_wake_greeting() -> None:
+    if not WAKE_GREETING_ENABLED or not WAKE_GREETING_TEXT:
+        return
+
+    if shutil.which("spd-say"):
+        try:
+            subprocess.Popen(
+                ["spd-say", WAKE_GREETING_TEXT],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return
+        except Exception as exc:
+            LOGGER.warning("Wake greeting via spd-say failed: %s", exc)
+
+    if shutil.which("espeak"):
+        try:
+            subprocess.Popen(
+                ["espeak", WAKE_GREETING_TEXT],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return
+        except Exception as exc:
+            LOGGER.warning("Wake greeting via espeak failed: %s", exc)
+
+
 def validate_environment() -> bool:
     required_tools = ["ffmpeg"]
     missing_required = [tool for tool in required_tools if not shutil.which(tool)]
@@ -101,9 +172,15 @@ def validate_environment() -> bool:
         return False
 
     optional_tools = ["hyprctl", "wl-copy", "notify-send", "zenity"]
+    if DICTATION_INJECTOR == "wtype":
+        optional_tools.append("wtype")
     missing_optional = [tool for tool in optional_tools if not shutil.which(tool)]
     if missing_optional:
         LOGGER.warning("Missing optional tools: %s", ", ".join(missing_optional))
+
+    if DICTATION_INJECTOR == "wtype" and not shutil.which("wtype"):
+        LOGGER.warning("Dictation injector is set to wtype but wtype is not installed; using clipboard fallback")
+        notify("Voice", "wtype missing: using clipboard fallback")
 
     return True
 
@@ -429,6 +506,7 @@ def run_dictation() -> int:
 
 def handle_command_text(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
     clean = normalize(raw_text)
+    show_partial(clean)
     probability = language_probability if language_probability is not None else 0.0
     LOGGER.info(
         "Input source=%s language=%s probability=%.3f raw=%s normalized=%s",
@@ -495,6 +573,38 @@ def handle_input(input_mode: str) -> int:
         notify("Voice", f"Dictation language: {label}")
         LOGGER.info("Voice hotkey end status=ok source=dictate_language toggled=%s", selected)
         return 0
+
+    if input_mode == "wakeword-enable":
+        _set_wakeword_enabled(True)
+        notify("Voice", "Wake word enabled")
+        LOGGER.info("Voice hotkey end status=ok source=wakeword_enable enabled=true")
+        return 0
+
+    if input_mode == "wakeword-disable":
+        _set_wakeword_enabled(False)
+        notify("Voice", "Wake word disabled")
+        LOGGER.info("Voice hotkey end status=ok source=wakeword_disable enabled=false")
+        return 0
+
+    if input_mode == "wakeword-toggle":
+        enabled = not _read_wakeword_enabled()
+        _set_wakeword_enabled(enabled)
+        notify("Voice", f"Wake word {'enabled' if enabled else 'disabled'}")
+        LOGGER.info("Voice hotkey end status=ok source=wakeword_toggle enabled=%s", enabled)
+        return 0
+
+    if input_mode == "wakeword-status":
+        enabled = _read_wakeword_enabled()
+        notify("Voice", f"Wake word {'enabled' if enabled else 'disabled'}")
+        LOGGER.info("Voice hotkey end status=ok source=wakeword_status enabled=%s", enabled)
+        return 0
+
+    if input_mode == "wake-start":
+        if not _read_wakeword_enabled():
+            LOGGER.info("Voice hotkey end status=wake_ignored source=wake_start enabled=false")
+            return 0
+        _say_wake_greeting()
+        return start_press_hold_command()
 
     if input_mode == "dictate-start":
         return start_press_hold_dictation()
@@ -568,7 +678,14 @@ def request_daemon(input_mode: str, *, auto_start: bool = True, entry_script: Pa
                 client.settimeout(DAEMON_RESPONSE_TIMEOUT)
                 client.sendall(payload)
                 data = _recv_json_line(client)
-            return int(data.get("rc", 1))
+            rc = int(data.get("rc", 1))
+            if rc == 2 and input_mode in WAKEWORD_INPUT_MODES:
+                LOGGER.warning(
+                    "Daemon rejected input=%s with rc=2; daemon may be stale and need restart",
+                    input_mode,
+                )
+                notify("Voice", "Voice daemon is stale, restart service")
+            return rc
         except (FileNotFoundError, ConnectionRefusedError, socket.timeout, json.JSONDecodeError, ValueError, OSError):
             if not auto_start:
                 return 1

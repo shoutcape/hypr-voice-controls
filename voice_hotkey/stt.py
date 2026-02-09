@@ -3,7 +3,9 @@ import os
 import threading
 from pathlib import Path
 
+from .asr_whispercpp import transcribe_file as transcribe_with_whisper_server
 from .config import (
+    ASR_BACKEND,
     COMMAND_MODEL_NAME,
     COMMAND_MODEL_NAME_EN,
     COMMAND_MODEL_NAME_FI,
@@ -133,6 +135,8 @@ def get_whisper_model(model_name: str):
 
 
 def warm_model(model_name: str) -> None:
+    if ASR_BACKEND == "whispercpp_server":
+        return
     try:
         get_whisper_model(model_name)
     except Exception as exc:
@@ -140,11 +144,16 @@ def warm_model(model_name: str) -> None:
 
 
 def is_model_loaded(model_name: str) -> bool:
+    if ASR_BACKEND == "whispercpp_server":
+        return True
     with WHISPER_MODELS_LOCK:
         return any(key[0] == model_name for key in WHISPER_MODELS.keys())
 
 
 def transcribe(audio_path: Path, language: str | None = None, mode: str = "command") -> tuple[str, str, float]:
+    if ASR_BACKEND == "whispercpp_server":
+        return transcribe_with_whisper_server(audio_path=audio_path, language=language)
+
     model_name = command_model_name(language) if mode == "command" else dictation_model_name(language)
     model = get_whisper_model(model_name)
     transcribe_kwargs = {
@@ -167,6 +176,8 @@ def transcribe(audio_path: Path, language: str | None = None, mode: str = "comma
 
 
 def preload_models() -> None:
+    if ASR_BACKEND == "whispercpp_server":
+        return
     for model_name in {
         COMMAND_MODEL_NAME,
         COMMAND_MODEL_NAME_EN,

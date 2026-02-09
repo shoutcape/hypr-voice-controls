@@ -61,3 +61,14 @@ STATE_MAX_AGE_SECONDS = env_int("VOICE_STATE_MAX_AGE_SECONDS", 900)
 LOG_TRANSCRIPTS = env_bool("VOICE_LOG_TRANSCRIPTS", False)
 LOG_COMMAND_OUTPUT_MAX = env_int("VOICE_LOG_COMMAND_OUTPUT_MAX", 300)
 VENV_PYTHON = Path.home() / ".venvs" / "voice" / "bin" / "python"
+
+ASR_BACKEND = os.environ.get("VOICE_ASR_BACKEND", "faster_whisper").strip().lower()
+WHISPER_SERVER_URL = os.environ.get("VOICE_WHISPER_SERVER_URL", "http://127.0.0.1:8080/inference").strip()
+WHISPER_SERVER_TIMEOUT = env_int("VOICE_WHISPER_SERVER_TIMEOUT", 90)
+DICTATION_INJECTOR = os.environ.get("VOICE_DICTATION_INJECTOR", "wtype").strip().lower()
+OVERLAY_ENABLED = env_bool("VOICE_OVERLAY_ENABLED", True)
+WAKEWORD_ENABLED_DEFAULT = env_bool("VOICE_WAKEWORD_ENABLED", False)
+WAKEWORD_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-wakeword.json"
+WAKEWORD_MODEL_DIR = Path(os.path.expanduser(os.environ.get("VOICE_WAKEWORD_MODEL_PATH", "~/.config/hypr-voice-controls/wakeword/")))
+WAKE_GREETING_ENABLED = env_bool("VOICE_WAKE_GREETING_ENABLED", True)
+WAKE_GREETING_TEXT = os.environ.get("VOICE_WAKE_GREETING_TEXT", "hello").strip()

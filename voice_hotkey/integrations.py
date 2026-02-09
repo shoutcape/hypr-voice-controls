@@ -2,7 +2,7 @@ import shutil
 import subprocess
 import time
 
-from .config import LOG_COMMAND_OUTPUT_MAX
+from .config import DICTATION_INJECTOR, LOG_COMMAND_OUTPUT_MAX
 from .logging_utils import LOGGER
 
 
@@ -21,6 +21,32 @@ def notify(title: str, body: str) -> None:
 
 
 def inject_text_into_focused_input(text: str) -> bool:
+    if DICTATION_INJECTOR == "wtype":
+        if not shutil.which("wtype"):
+            LOGGER.warning("wtype not found; falling back to wl-copy + hyprctl paste path")
+            return _inject_text_via_clipboard(text)
+        try:
+            timeout = min(20, max(3, int(len(text) / 80) + 2))
+            proc = subprocess.run(["wtype", text], check=False, capture_output=True, text=True, timeout=timeout)
+        except Exception as exc:
+            LOGGER.error("wtype injection failed: %s", exc)
+            return _inject_text_via_clipboard(text)
+
+        if proc.returncode == 0:
+            return True
+
+        LOGGER.error(
+            "wtype injection failed rc=%s stdout=%s stderr=%s",
+            proc.returncode,
+            _truncate(proc.stdout.strip()),
+            _truncate(proc.stderr.strip()),
+        )
+        return _inject_text_via_clipboard(text)
+
+    return _inject_text_via_clipboard(text)
+
+
+def _inject_text_via_clipboard(text: str) -> bool:
     if not shutil.which("wl-copy"):
         LOGGER.error("Cannot inject text: wl-copy not found")
         return False
