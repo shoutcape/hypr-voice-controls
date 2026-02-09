@@ -60,8 +60,8 @@ bindr = SUPER, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.
 bind  = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-start
 bindr = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-stop
 
-# Toggle dictation language (fi/en)
-bind = SUPER, B, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-language
+# Toggle wake-word listener state
+bind = SUPER, B, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input wakeword-toggle
 ```
 
 If you prefer a separate file under `~/.config/hypr/conf.d/`, make sure your `~/.config/hypr/hyprland.conf` explicitly sources it.

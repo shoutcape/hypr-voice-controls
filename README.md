@@ -46,6 +46,7 @@ For private spoken-command definitions, copy `examples/hypr/voice-commands.json`
 - language toggle (`fi`/`en`) persisted under `~/.local/state/voice-hotkey-language`
 - optional whisper.cpp server backend via `VOICE_ASR_BACKEND=whispercpp_server`
 - wake-word runtime toggles (`wakeword-enable|disable|toggle|status`) with state under `~/.local/state/voice-hotkey-wakeword.json`
+- endpointed command sessions for wake starts (`wake-start`) and manual tests (`command-auto`)
 
 ## Dependencies
 
@@ -78,6 +79,12 @@ export VOICE_ASR_BACKEND=faster_whisper
 export VOICE_WHISPER_SERVER_URL="http://127.0.0.1:8080/inference"
 export VOICE_AUDIO_BACKEND=pulse
 export VOICE_AUDIO_SOURCE=default
+export VOICE_SAMPLE_RATE_HZ=16000
+export VOICE_FRAME_MS=20
+export VOICE_SESSION_MAX_SECONDS=12
+export VOICE_VAD_RMS_THRESHOLD=600
+export VOICE_VAD_MIN_SPEECH_MS=120
+export VOICE_VAD_END_SILENCE_MS=800
 export VOICE_DICTATION_INJECTOR=wtype
 export VOICE_OVERLAY_ENABLED=true
 export VOICE_DAEMON_MAX_REQUEST_BYTES=8192
@@ -126,11 +133,8 @@ bindr = SUPER, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.
 bind  = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-start
 bindr = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-stop
 
-# language toggle
-bind = SUPER, B, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-language
-
-# wake-word runtime toggle
-bind = SUPER, N, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input wakeword-toggle
+# wake-word runtime toggle (reuses previous language-toggle key)
+bind = SUPER, B, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input wakeword-toggle
 ```
 
 Reload Hyprland after edits:
@@ -187,6 +191,7 @@ sleep 1
 ```bash
 /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input wakeword-status
 /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input wakeword-toggle
+/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-auto
 ```
 
 ```bash

@@ -37,6 +37,7 @@ from .config import (
 from .integrations import inject_text_into_focused_input, notify, run_command
 from .logging_utils import LOGGER
 from .overlay import show_partial
+from .orchestrator import run_endpointed_command_session
 from .state_utils import get_saved_dictation_language, toggle_saved_dictation_language, write_private_text
 from .stt import dictation_model_name, is_model_loaded, preload_models, transcribe, warm_model
 
@@ -50,6 +51,7 @@ ALLOWED_INPUT_MODES = {
     "dictate-language",
     "command-start",
     "command-stop",
+    "command-auto",
     "wake-start",
     "wakeword-enable",
     "wakeword-disable",
@@ -604,7 +606,18 @@ def handle_input(input_mode: str) -> int:
             LOGGER.info("Voice hotkey end status=wake_ignored source=wake_start enabled=false")
             return 0
         _say_wake_greeting()
-        return start_press_hold_command()
+        return run_endpointed_command_session(
+            language=get_saved_dictation_language(),
+            source="wake_start",
+            command_handler=handle_command_text,
+        )
+
+    if input_mode == "command-auto":
+        return run_endpointed_command_session(
+            language=get_saved_dictation_language(),
+            source="command_auto",
+            command_handler=handle_command_text,
+        )
 
     if input_mode == "dictate-start":
         return start_press_hold_dictation()
