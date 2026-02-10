@@ -1,7 +1,6 @@
 import json
 import time
 from collections import deque
-from pathlib import Path
 
 from .audio_stream import FFmpegPCMStream
 from .config import (
@@ -110,24 +109,24 @@ def run_wakeword_daemon() -> int:
     from .app import request_daemon
 
     with FFmpegPCMStream(sample_rate_hz=16000, frame_ms=WAKEWORD_FRAME_MS) as stream:
+        def _restart_stream(reason: str) -> None:
+            nonlocal empty_frame_streak
+            LOGGER.warning("Wakeword stream %s; restarting ffmpeg capture", reason)
+            stream.stop()
+            time.sleep(0.05)
+            stream.start()
+            empty_frame_streak = 0
+
         read_timeout_ms = max(120, WAKEWORD_FRAME_MS * 3)
         while True:
             frame = stream.read_frame_with_timeout(read_timeout_ms)
             if not frame:
                 if not stream.is_running():
-                    LOGGER.warning("Wakeword stream exited; restarting ffmpeg capture")
-                    stream.stop()
-                    time.sleep(0.05)
-                    stream.start()
-                    empty_frame_streak = 0
+                    _restart_stream("exited")
                     continue
                 empty_frame_streak += 1
                 if empty_frame_streak >= empty_frame_restart_threshold:
-                    LOGGER.warning("Wakeword stream stalled; restarting ffmpeg capture")
-                    stream.stop()
-                    time.sleep(0.05)
-                    stream.start()
-                    empty_frame_streak = 0
+                    _restart_stream("stalled")
                 time.sleep(0.02)
                 continue
             empty_frame_streak = 0

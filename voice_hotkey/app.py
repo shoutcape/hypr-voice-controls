@@ -107,21 +107,13 @@ def _sanitize_transcript(value: str) -> str:
     return f"<redacted len={len(value)}>"
 
 
-def _strip_wake_prefix(text: str) -> str:
-    trimmed = text.strip()
-    for prefix in WAKE_PREFIXES:
-        if trimmed.startswith(prefix):
-            remainder = trimmed[len(prefix) :].lstrip(" ,.:;!?-")
-            return remainder
-    return trimmed
-
-
-def _strip_wake_prefix_spoken(text: str) -> str:
+def _strip_wake_prefix(text: str, *, preserve_case: bool = False) -> str:
     spoken = text.strip()
     lowered = spoken.lower()
     for prefix in WAKE_PREFIXES:
         if lowered.startswith(prefix):
-            remainder = spoken[len(prefix) :].lstrip(" ,.:;!?-")
+            source = spoken if preserve_case else lowered
+            remainder = source[len(prefix) :].lstrip(" ,.:;!?-")
             return remainder
     return spoken
 
@@ -381,6 +373,22 @@ def _stop_press_hold_session(
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _complete_dictation_output(spoken: str, *, source: str) -> int:
+    if not spoken:
+        notify("Voice", "No speech detected")
+        LOGGER.info("Voice hotkey end status=no_speech source=%s", source)
+        return 0
+
+    if inject_text_into_focused_input(spoken):
+        notify("Voice", "Dictation pasted")
+        LOGGER.info("Voice hotkey end status=ok source=%s text=%s", source, _sanitize_transcript(spoken))
+        return 0
+
+    notify("Voice", "Dictation paste failed")
+    LOGGER.info("Voice hotkey end status=paste_failed source=%s text=%s", source, _sanitize_transcript(spoken))
+    return 1
+
+
 def start_press_hold_dictation() -> int:
     return _start_press_hold_session(
         state_path=DICTATE_STATE_PATH,
@@ -425,20 +433,7 @@ def stop_press_hold_dictation() -> int:
             probability,
             _sanitize_transcript(spoken),
         )
-
-        if not spoken:
-            notify("Voice", "No speech detected")
-            LOGGER.info("Voice hotkey end status=no_speech source=dictate_hold")
-            return 0
-
-        if inject_text_into_focused_input(spoken):
-            notify("Voice", "Dictation pasted")
-            LOGGER.info("Voice hotkey end status=ok source=dictate_hold text=%s", _sanitize_transcript(spoken))
-            return 0
-
-        notify("Voice", "Dictation paste failed")
-        LOGGER.info("Voice hotkey end status=paste_failed source=dictate_hold text=%s", _sanitize_transcript(spoken))
-        return 1
+        return _complete_dictation_output(spoken, source="dictate_hold")
 
     return _stop_press_hold_session(
         state_path=DICTATE_STATE_PATH,
@@ -516,24 +511,11 @@ def run_dictation() -> int:
             probability,
             _sanitize_transcript(spoken),
         )
-
-        if not spoken:
-            notify("Voice", "No speech detected")
-            LOGGER.info("Voice hotkey end status=no_speech source=dictate")
-            return 0
-
-        if inject_text_into_focused_input(spoken):
-            notify("Voice", "Dictation pasted")
-            LOGGER.info("Voice hotkey end status=ok source=dictate text=%s", _sanitize_transcript(spoken))
-            return 0
-
-        notify("Voice", "Dictation paste failed")
-        LOGGER.info("Voice hotkey end status=paste_failed source=dictate text=%s", _sanitize_transcript(spoken))
-        return 1
+        return _complete_dictation_output(spoken, source="dictate")
 
 
 def _parse_wake_intent(raw_text: str) -> tuple[str | None, str]:
-    spoken = _strip_wake_prefix_spoken(raw_text)
+    spoken = _strip_wake_prefix(raw_text, preserve_case=True)
     lower_spoken = spoken.lower()
 
     lowered_tokens = lower_spoken.split()
@@ -560,19 +542,7 @@ def handle_dictation_text(raw_text: str, source: str, language: str | None, lang
         _sanitize_transcript(spoken),
     )
 
-    if not spoken:
-        notify("Voice", "No speech detected")
-        LOGGER.info("Voice hotkey end status=no_speech source=%s", source)
-        return 0
-
-    if inject_text_into_focused_input(spoken):
-        notify("Voice", "Dictation pasted")
-        LOGGER.info("Voice hotkey end status=ok source=%s text=%s", source, _sanitize_transcript(spoken))
-        return 0
-
-    notify("Voice", "Dictation paste failed")
-    LOGGER.info("Voice hotkey end status=paste_failed source=%s text=%s", source, _sanitize_transcript(spoken))
-    return 1
+    return _complete_dictation_output(spoken, source=source)
 
 
 def run_wake_followup_session(intent: str, language: str) -> int:
@@ -747,7 +717,7 @@ def handle_input(input_mode: str) -> int:
                 )
 
             if not intent:
-                spoken_after_prefix = _strip_wake_prefix_spoken(raw_text)
+                spoken_after_prefix = _strip_wake_prefix(raw_text, preserve_case=True)
                 normalized_after_prefix = normalize(spoken_after_prefix)
                 word_count = len(normalized_after_prefix.split()) if normalized_after_prefix else 0
                 if word_count >= WAKE_AUTO_DICTATION_MIN_WORDS:

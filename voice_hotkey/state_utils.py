@@ -26,12 +26,3 @@ def get_saved_dictation_language() -> str:
     except Exception as exc:
         LOGGER.warning("Could not read language file: %s", exc)
     return "en"
-
-
-def set_saved_dictation_language(language: str) -> None:
-    write_private_text(LANGUAGE_PATH, language)
-
-
-def toggle_saved_dictation_language() -> str:
-    set_saved_dictation_language("en")
-    return "en"
