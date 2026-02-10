@@ -1,6 +1,7 @@
 import argparse
 import fcntl
 import json
+import re
 import shutil
 import socket
 import subprocess
@@ -31,15 +32,24 @@ from .config import (
     WAKEWORD_STATE_PATH,
     WAKE_GREETING_ENABLED,
     WAKE_GREETING_TEXT,
+    WAKE_DICTATE_SESSION_MAX_SECONDS,
+    WAKE_INTENT_VAD_END_SILENCE_MS,
     WAKE_SESSION_MAX_SECONDS,
     WAKE_START_SPEECH_TIMEOUT_MS,
     WAKE_VAD_RMS_THRESHOLD,
     WAKE_VAD_MIN_SPEECH_MS,
     WAKE_VAD_END_SILENCE_MS,
+    WAKE_DICTATE_VAD_END_SILENCE_MS,
     VENV_PYTHON,
     DICTATION_INJECTOR,
 )
-from .integrations import inject_text_into_focused_input, notify, run_command
+from .integrations import (
+    inject_text_into_focused_input,
+    mute_discord_mic_streams_for_dictation,
+    notify,
+    restore_discord_mic_streams_after_dictation,
+    run_command,
+)
 from .logging_utils import LOGGER
 from .overlay import show_partial
 from .orchestrator import run_endpointed_command_session
@@ -74,7 +84,11 @@ WAKEWORD_INPUT_MODES = {
 WAKE_PREFIXES = (
     "hey hyper",
     "hey hypr",
+    "heyhyper",
+    "heyhypr",
 )
+
+WAKE_AUTO_DICTATION_MIN_WORDS = 4
 
 WAKE_INTENT_COMMAND_KEYWORDS = {
     "command",
@@ -101,6 +115,16 @@ def _strip_wake_prefix(text: str) -> str:
             remainder = trimmed[len(prefix) :].lstrip(" ,.:;!?-")
             return remainder
     return trimmed
+
+
+def _strip_wake_prefix_spoken(text: str) -> str:
+    spoken = text.strip()
+    lowered = spoken.lower()
+    for prefix in WAKE_PREFIXES:
+        if lowered.startswith(prefix):
+            remainder = spoken[len(prefix) :].lstrip(" ,.:;!?-")
+            return remainder
+    return spoken
 
 
 def _is_state_stale(started_at: float | int | None) -> bool:
@@ -224,6 +248,7 @@ def start_press_hold_dictation() -> int:
     language = get_saved_dictation_language()
     tmpdir = tempfile.mkdtemp(prefix="voice-dictate-hold-")
     audio_path = Path(tmpdir) / "capture.wav"
+    discord_muted_ids = mute_discord_mic_streams_for_dictation()
 
     cmd = [
         "ffmpeg",
@@ -244,6 +269,7 @@ def start_press_hold_dictation() -> int:
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
     except FileNotFoundError:
+        restore_discord_mic_streams_after_dictation(discord_muted_ids)
         notify("Voice", "ffmpeg not found")
         LOGGER.error("Could not start dictation recorder: ffmpeg not found")
         return 1
@@ -254,6 +280,7 @@ def start_press_hold_dictation() -> int:
         "pid_required_substrings": ["ffmpeg", str(audio_path)],
         "language": language,
         "started_at": time.time(),
+        "discord_muted_source_output_ids": discord_muted_ids,
     }
     write_private_text(DICTATE_STATE_PATH, json.dumps(state))
     notify("Voice", f"Recording... release keys to transcribe ({language})")
@@ -325,6 +352,10 @@ def stop_press_hold_dictation() -> int:
     language = state.get("language", get_saved_dictation_language())
     required_substrings = _state_required_substrings(state)
     started_at = state.get("started_at")
+    discord_muted_ids_raw = state.get("discord_muted_source_output_ids", [])
+    discord_muted_ids = [
+        output_id for output_id in discord_muted_ids_raw if isinstance(output_id, int) and output_id >= 0
+    ]
 
     notify("Voice", "Key released. Processing dictation...")
 
@@ -380,6 +411,7 @@ def stop_press_hold_dictation() -> int:
         LOGGER.info("Voice hotkey end status=paste_failed source=dictate_hold text=%s", _sanitize_transcript(spoken))
         return 1
     finally:
+        restore_discord_mic_streams_after_dictation(discord_muted_ids)
         DICTATE_STATE_PATH.unlink(missing_ok=True)
         if tmpdir.exists():
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -494,13 +526,21 @@ def run_dictation() -> int:
         return 1
 
 
-def _classify_wake_intent(clean_text: str) -> str | None:
-    tokens = set(clean_text.split())
-    if tokens.intersection(WAKE_INTENT_DICTATE_KEYWORDS):
-        return "dictate"
-    if tokens.intersection(WAKE_INTENT_COMMAND_KEYWORDS):
-        return "command"
-    return None
+def _parse_wake_intent(raw_text: str) -> tuple[str | None, str]:
+    spoken = _strip_wake_prefix_spoken(raw_text)
+    lower_spoken = spoken.lower()
+
+    lowered_tokens = lower_spoken.split()
+    spoken_tokens = spoken.split()
+    for index, token in enumerate(lowered_tokens):
+        keyword = re.sub(r"[^a-z0-9]+", "", token)
+        if keyword in WAKE_INTENT_DICTATE_KEYWORDS:
+            remainder = " ".join(spoken_tokens[index + 1 :]).strip()
+            return "dictate", remainder
+        if keyword in WAKE_INTENT_COMMAND_KEYWORDS:
+            remainder = " ".join(spoken_tokens[index + 1 :]).strip()
+            return "command", remainder
+    return None, ""
 
 
 def handle_dictation_text(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
@@ -536,11 +576,11 @@ def run_wake_followup_session(intent: str, language: str) -> int:
             language=language,
             source="wake_dictate",
             command_handler=handle_dictation_text,
-            max_seconds=WAKE_SESSION_MAX_SECONDS,
+            max_seconds=WAKE_DICTATE_SESSION_MAX_SECONDS,
             start_speech_timeout_ms=WAKE_START_SPEECH_TIMEOUT_MS,
             vad_rms_threshold=WAKE_VAD_RMS_THRESHOLD,
             vad_min_speech_ms=WAKE_VAD_MIN_SPEECH_MS,
-            vad_end_silence_ms=WAKE_VAD_END_SILENCE_MS,
+            vad_end_silence_ms=WAKE_DICTATE_VAD_END_SILENCE_MS,
             prompt_text="Wake heard, speak dictation...",
             stt_mode="dictate",
         )
@@ -655,12 +695,14 @@ def handle_input(input_mode: str) -> int:
             LOGGER.info("Voice hotkey end status=wake_ignored source=wake_start enabled=false")
             return 0
         LOGGER.info(
-            "Wake start triggered session_max=%s start_timeout_ms=%s vad_threshold=%s vad_min_speech_ms=%s vad_end_silence_ms=%s",
+            "Wake start triggered session_max=%s start_timeout_ms=%s vad_threshold=%s vad_min_speech_ms=%s vad_end_silence_ms=%s intent_end_silence_ms=%s dictate_end_silence_ms=%s",
             WAKE_SESSION_MAX_SECONDS,
             WAKE_START_SPEECH_TIMEOUT_MS,
             WAKE_VAD_RMS_THRESHOLD,
             WAKE_VAD_MIN_SPEECH_MS,
             WAKE_VAD_END_SILENCE_MS,
+            WAKE_INTENT_VAD_END_SILENCE_MS,
+            WAKE_DICTATE_VAD_END_SILENCE_MS,
         )
         _say_wake_greeting()
         wake_language = get_saved_dictation_language()
@@ -668,21 +710,60 @@ def handle_input(input_mode: str) -> int:
         def _wake_intent_handler(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
             clean = normalize(raw_text)
             clean = _strip_wake_prefix(clean)
-            intent = _classify_wake_intent(clean)
+            intent, remainder = _parse_wake_intent(raw_text)
             probability = language_probability if language_probability is not None else 0.0
             LOGGER.info(
-                "Wake intent language=%s probability=%.3f raw=%s normalized=%s intent=%s",
+                "Wake intent language=%s probability=%.3f raw=%s normalized=%s intent=%s remainder=%s",
                 language,
                 probability,
                 _sanitize_transcript(raw_text),
                 _sanitize_transcript(clean),
                 intent,
+                _sanitize_transcript(remainder),
             )
 
-            if not intent:
-                LOGGER.info("Wake intent unclear; falling back to command matching")
+            if intent == "command" and remainder:
+                LOGGER.info("Wake intent command with inline payload; skipping follow-up capture")
                 return handle_command_text(
-                    raw_text,
+                    remainder,
+                    source="wake_command_inline",
+                    language=language,
+                    language_probability=language_probability,
+                )
+
+            if intent == "dictate" and remainder:
+                LOGGER.info("Wake intent dictation with inline payload; skipping follow-up capture")
+                return handle_dictation_text(
+                    remainder,
+                    source="wake_dictate_inline",
+                    language=language,
+                    language_probability=language_probability,
+                )
+
+            if not intent:
+                spoken_after_prefix = _strip_wake_prefix_spoken(raw_text)
+                normalized_after_prefix = normalize(spoken_after_prefix)
+                word_count = len(normalized_after_prefix.split()) if normalized_after_prefix else 0
+                if word_count >= WAKE_AUTO_DICTATION_MIN_WORDS:
+                    LOGGER.info(
+                        "Wake implicit dictation by length words=%s threshold=%s",
+                        word_count,
+                        WAKE_AUTO_DICTATION_MIN_WORDS,
+                    )
+                    return handle_dictation_text(
+                        spoken_after_prefix,
+                        source="wake_dictate_implicit",
+                        language=language,
+                        language_probability=language_probability,
+                    )
+
+                LOGGER.info(
+                    "Wake implicit command by length words=%s threshold=%s",
+                    word_count,
+                    WAKE_AUTO_DICTATION_MIN_WORDS,
+                )
+                return handle_command_text(
+                    spoken_after_prefix,
                     source="wake_start",
                     language=language,
                     language_probability=language_probability,
@@ -699,7 +780,7 @@ def handle_input(input_mode: str) -> int:
             start_speech_timeout_ms=WAKE_START_SPEECH_TIMEOUT_MS,
             vad_rms_threshold=WAKE_VAD_RMS_THRESHOLD,
             vad_min_speech_ms=WAKE_VAD_MIN_SPEECH_MS,
-            vad_end_silence_ms=WAKE_VAD_END_SILENCE_MS,
+            vad_end_silence_ms=WAKE_INTENT_VAD_END_SILENCE_MS,
             prompt_text="Wake heard, say command or dictate...",
         )
 
@@ -838,6 +919,7 @@ def run_daemon() -> int:
                 with conn:
                     rc = 1
                     try:
+                        conn.settimeout(DAEMON_CONNECT_TIMEOUT)
                         request = _recv_json_line(conn)
                         input_mode = request.get("input", "voice")
                         if input_mode not in ALLOWED_INPUT_MODES:

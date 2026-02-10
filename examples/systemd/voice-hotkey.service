@@ -9,8 +9,10 @@ Restart=on-failure
 RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
-Environment=VOICE_COMMAND_MODEL=large-v3
-Environment=VOICE_COMMAND_MODEL_EN=large-v3
+Environment=VOICE_COMMAND_MODEL=large-v3-turbo
+Environment=VOICE_DICTATE_MODEL=large-v3-turbo
+Environment=VOICE_COMMAND_MODEL_EN=large-v3-turbo
+Environment=VOICE_DICTATE_MODEL_EN=large-v3-turbo
 Environment=VOICE_DICTATION_INJECTOR=wtype
 Environment=VOICE_ASR_BACKEND=faster_whisper
 # Environment=VOICE_ASR_BACKEND=whispercpp_server
@@ -20,10 +22,13 @@ Environment=VOICE_TTS_ENABLED=false
 Environment=VOICE_TTS_COOLDOWN_MS=900
 Environment=VOICE_TTS_MAX_CHARS=90
 Environment=VOICE_WAKE_SESSION_MAX_SECONDS=8
+Environment=VOICE_WAKE_DICTATE_SESSION_MAX_SECONDS=16
 Environment=VOICE_WAKE_START_SPEECH_TIMEOUT_MS=7000
 Environment=VOICE_WAKE_VAD_RMS_THRESHOLD=120
 Environment=VOICE_WAKE_VAD_MIN_SPEECH_MS=20
 Environment=VOICE_WAKE_VAD_END_SILENCE_MS=300
+Environment=VOICE_WAKE_INTENT_VAD_END_SILENCE_MS=700
+Environment=VOICE_WAKE_DICTATE_VAD_END_SILENCE_MS=1800
 
 [Install]
 WantedBy=default.target
