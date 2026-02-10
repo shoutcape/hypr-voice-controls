@@ -1,4 +1,3 @@
-import shutil
 import subprocess
 import time
 
@@ -11,6 +10,7 @@ from .config import (
     TTS_MAX_CHARS,
 )
 from .logging_utils import LOGGER
+from .tooling import has_tool
 
 
 _LAST_TTS_AT = 0.0
@@ -49,9 +49,9 @@ def _speak_feedback(text: str) -> None:
         return
 
     cmd: list[str] | None = None
-    if shutil.which("spd-say"):
+    if has_tool("spd-say"):
         cmd = ["spd-say", capped]
-    elif shutil.which("espeak"):
+    elif has_tool("espeak"):
         cmd = ["espeak", capped]
 
     if not cmd:
@@ -77,7 +77,7 @@ def notify(title: str, body: str) -> None:
     if not clean_body:
         return
 
-    if shutil.which("hyprctl"):
+    if has_tool("hyprctl"):
         try:
             subprocess.run(
                 ["hyprctl", "notify", "-1", str(NOTIFY_TIMEOUT_MS), _notify_color(clean_body), f"{clean_title}: {clean_body}"],
@@ -91,7 +91,7 @@ def notify(title: str, body: str) -> None:
         except Exception as exc:
             LOGGER.debug("hyprctl notify failed: %s", exc)
 
-    if shutil.which("notify-send"):
+    if has_tool("notify-send"):
         try:
             subprocess.run(
                 [
@@ -117,7 +117,7 @@ def notify(title: str, body: str) -> None:
 
 def inject_text_into_focused_input(text: str) -> bool:
     if DICTATION_INJECTOR == "wtype":
-        if not shutil.which("wtype"):
+        if not has_tool("wtype"):
             LOGGER.warning("wtype not found; falling back to wl-copy + hyprctl paste path")
             return _inject_text_via_clipboard(text)
         try:
@@ -142,7 +142,7 @@ def inject_text_into_focused_input(text: str) -> bool:
 
 
 def _inject_text_via_clipboard(text: str) -> bool:
-    if not shutil.which("wl-copy"):
+    if not has_tool("wl-copy"):
         LOGGER.error("Cannot inject text: wl-copy not found")
         return False
 

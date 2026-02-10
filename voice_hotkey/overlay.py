@@ -1,9 +1,9 @@
-import shutil
 import subprocess
 import time
 
 from .config import OVERLAY_ENABLED
 from .logging_utils import LOGGER
+from .tooling import has_tool
 
 _LAST_OVERLAY_AT = 0.0
 _MIN_INTERVAL_SECONDS = 0.25
@@ -22,7 +22,7 @@ def show_partial(text: str) -> None:
         return
     _LAST_OVERLAY_AT = now
 
-    if shutil.which("hyprctl"):
+    if has_tool("hyprctl"):
         try:
             subprocess.run(
                 ["hyprctl", "notify", "-1", "1200", "rgb(88ccff)", f"Voice: {clean}"],
@@ -35,7 +35,7 @@ def show_partial(text: str) -> None:
         except Exception as exc:
             LOGGER.debug("hyprctl overlay failed: %s", exc)
 
-    if shutil.which("notify-send"):
+    if has_tool("notify-send"):
         try:
             subprocess.run(
                 ["notify-send", "-a", "voice-hotkey", "Voice", clean],
