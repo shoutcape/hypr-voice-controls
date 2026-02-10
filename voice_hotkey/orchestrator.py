@@ -1,4 +1,3 @@
-from array import array
 import tempfile
 import time
 import wave
@@ -30,17 +29,18 @@ def _write_wav(path: Path, pcm_data: bytes, sample_rate_hz: int) -> None:
 
 
 def _preroll_has_speech(pcm_data: bytes, rms_threshold: int) -> bool:
-    if not pcm_data:
+    if len(pcm_data) < 2:
         return False
-    samples = array("h")
-    samples.frombytes(pcm_data)
+
+    try:
+        samples = memoryview(pcm_data).cast("h")
+    except (TypeError, ValueError):
+        return False
+
     if not samples:
         return False
-    peak = 0
-    for sample in samples:
-        magnitude = abs(sample)
-        if magnitude > peak:
-            peak = magnitude
+
+    peak = max(abs(sample) for sample in samples)
     return peak >= rms_threshold
 
 
@@ -93,6 +93,7 @@ def run_endpointed_command_session(
     had_preroll_speech = _preroll_has_speech(preroll_bytes, active_vad_rms_threshold)
 
     with FFmpegPCMStream(sample_rate_hz=AUDIO_SAMPLE_RATE_HZ, frame_ms=SESSION_FRAME_MS) as stream:
+        read_timeout_ms = max(200, SESSION_FRAME_MS * 4)
         while True:
             elapsed_ms = int((time.time() - started_at) * 1000)
             if elapsed_ms >= session_max_seconds * 1000:
@@ -103,8 +104,10 @@ def run_endpointed_command_session(
                 LOGGER.info("Endpointed command start timeout start_timeout_ms=%s", start_timeout_ms)
                 break
 
-            frame = stream.read_frame()
+            frame = stream.read_frame_with_timeout(read_timeout_ms)
             if not frame:
+                if stream.is_running():
+                    continue
                 break
 
             audio_bytes.extend(frame)

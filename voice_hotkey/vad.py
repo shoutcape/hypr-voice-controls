@@ -47,6 +47,8 @@ class EndpointVAD:
             self._speech_ms += self.frame_ms
             self._silence_ms = 0
         else:
+            if not self._has_started:
+                self._speech_ms = 0
             if self._has_started:
                 self._silence_ms += self.frame_ms
 

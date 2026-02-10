@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 from .audio import record_clip, stop_recording_pid
 from .commands import match_command, normalize
@@ -238,16 +239,8 @@ def validate_environment() -> bool:
     return True
 
 
-def start_press_hold_dictation() -> int:
-    if DICTATE_STATE_PATH.exists():
-        LOGGER.info("Voice hotkey source=dictate_start detected existing active state; preempting old dictation")
-        stop_press_hold_dictation()
-
-    language = get_saved_dictation_language()
-    tmpdir = tempfile.mkdtemp(prefix="voice-dictate-hold-")
-    audio_path = Path(tmpdir) / "capture.wav"
-
-    cmd = [
+def _build_ffmpeg_capture_cmd(audio_path: Path) -> list[str]:
+    return [
         "ffmpeg",
         "-y",
         "-loglevel",
@@ -263,57 +256,45 @@ def start_press_hold_dictation() -> int:
         str(audio_path),
     ]
 
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
-    except FileNotFoundError:
-        notify("Voice", "ffmpeg not found")
-        LOGGER.error("Could not start dictation recorder: ffmpeg not found")
-        return 1
-    state = {
-        "pid": proc.pid,
-        "tmpdir": tmpdir,
-        "audio_path": str(audio_path),
-        "pid_required_substrings": ["ffmpeg", str(audio_path)],
-        "language": language,
-        "started_at": time.time(),
-    }
-    write_private_text(DICTATE_STATE_PATH, json.dumps(state))
-    notify("Voice", f"Recording... release keys to transcribe ({language})")
-    LOGGER.info("Voice hotkey dictate_start pid=%s language=%s audio=%s", proc.pid, language, audio_path)
-    return 0
+
+def _wait_for_captured_audio(audio_path: Path, timeout_seconds: float = 2.0) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if audio_path.exists() and audio_path.stat().st_size > 0:
+            break
+        time.sleep(0.05)
 
 
-def start_press_hold_command() -> int:
-    if COMMAND_STATE_PATH.exists():
-        LOGGER.info("Voice hotkey source=command_start detected existing active state; preempting old command")
-        stop_press_hold_command()
+def _start_press_hold_session(
+    *,
+    state_path: Path,
+    tmp_prefix: str,
+    source_key: str,
+    preempt_label: str,
+    preempt_fn: Callable[[], int],
+    notify_text: str,
+    start_log_key: str,
+) -> int:
+    if state_path.exists():
+        LOGGER.info("Voice hotkey source=%s detected existing active state; preempting old %s", source_key, preempt_label)
+        preempt_fn()
 
-    tmpdir = tempfile.mkdtemp(prefix="voice-command-hold-")
-    audio_path = Path(tmpdir) / "capture.wav"
     language = get_saved_dictation_language()
-
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-loglevel",
-        "error",
-        "-f",
-        AUDIO_BACKEND,
-        "-i",
-        AUDIO_SOURCE,
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        str(audio_path),
-    ]
+    tmpdir = tempfile.mkdtemp(prefix=tmp_prefix)
+    audio_path = Path(tmpdir) / "capture.wav"
 
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+        proc = subprocess.Popen(
+            _build_ffmpeg_capture_cmd(audio_path),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
     except FileNotFoundError:
         notify("Voice", "ffmpeg not found")
-        LOGGER.error("Could not start command recorder: ffmpeg not found")
+        LOGGER.error("Could not start %s recorder: ffmpeg not found", preempt_label)
         return 1
+
     state = {
         "pid": proc.pid,
         "tmpdir": tmpdir,
@@ -322,23 +303,38 @@ def start_press_hold_command() -> int:
         "language": language,
         "started_at": time.time(),
     }
-    write_private_text(COMMAND_STATE_PATH, json.dumps(state))
-    notify("Voice", f"Listening for command ({language})... release keys to run")
-    LOGGER.info("Voice hotkey command_start pid=%s language=%s audio=%s", proc.pid, language, audio_path)
+    write_private_text(state_path, json.dumps(state))
+    notify("Voice", notify_text.format(language=language))
+    LOGGER.info("Voice hotkey %s pid=%s language=%s audio=%s", start_log_key, proc.pid, language, audio_path)
     return 0
 
 
-def stop_press_hold_dictation() -> int:
-    if not DICTATE_STATE_PATH.exists():
-        LOGGER.info("Voice hotkey end status=no_active_dictation source=dictate_stop")
-        notify("Voice", "No active dictation")
+def _stop_press_hold_session(
+    *,
+    state_path: Path,
+    no_active_source: str,
+    no_active_trigger_source: str,
+    no_active_notify: str,
+    state_label: str,
+    processing_notify: str,
+    stale_label: str,
+    stop_label: str,
+    no_speech_source: str,
+    transcribe_mode: str,
+    transcribe_failure_label: str,
+    transcribe_failure_source: str,
+    on_transcription: Callable[[str, str | None, float | None, str], int],
+) -> int:
+    if not state_path.exists():
+        LOGGER.info("Voice hotkey end status=%s source=%s", no_active_source, no_active_trigger_source)
+        notify("Voice", no_active_notify)
         return 0
 
     try:
-        state = json.loads(DICTATE_STATE_PATH.read_text(encoding="utf-8"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        LOGGER.error("Failed to parse dictation state: %s", exc)
-        DICTATE_STATE_PATH.unlink(missing_ok=True)
+        LOGGER.error("Failed to parse %s state: %s", state_label, exc)
+        state_path.unlink(missing_ok=True)
         return 1
 
     pid = int(state.get("pid", 0))
@@ -348,41 +344,83 @@ def stop_press_hold_dictation() -> int:
     required_substrings = _state_required_substrings(state)
     started_at = state.get("started_at")
 
-    notify("Voice", "Key released. Processing dictation...")
+    notify("Voice", processing_notify)
 
     if pid > 0:
         if _is_state_stale(started_at):
             LOGGER.warning(
-                "Skipping stale dictation recorder stop pid=%s started_at=%s max_age=%ss",
+                "Skipping stale %s recorder stop pid=%s started_at=%s max_age=%ss",
+                stale_label,
                 pid,
                 started_at,
                 STATE_MAX_AGE_SECONDS,
             )
         else:
-            stop_recording_pid(pid, "Dictation ffmpeg", required_substrings=required_substrings)
+            stop_recording_pid(pid, stop_label, required_substrings=required_substrings)
 
-    deadline = time.time() + 2.0
-    while time.time() < deadline:
-        if audio_path.exists() and audio_path.stat().st_size > 0:
-            break
-        time.sleep(0.05)
+    _wait_for_captured_audio(audio_path)
 
     try:
         if not audio_path.exists() or audio_path.stat().st_size == 0:
             notify("Voice", "No speech captured")
-            LOGGER.info("Voice hotkey end status=no_speech source=dictate_hold")
+            LOGGER.info("Voice hotkey end status=no_speech source=%s", no_speech_source)
             return 0
 
-        selected_dictation_model = dictation_model_name(language)
+        try:
+            text, detected_language, language_probability = transcribe(audio_path, language=language, mode=transcribe_mode)
+        except Exception as exc:
+            notify("Voice", f"Transcription failed: {type(exc).__name__}")
+            LOGGER.exception("%s transcription failed: %s", transcribe_failure_label, exc)
+            LOGGER.info("Voice hotkey end status=transcription_failed source=%s", transcribe_failure_source)
+            return 1
+
+        return on_transcription(text, detected_language, language_probability, language)
+    finally:
+        state_path.unlink(missing_ok=True)
+        if tmpdir.exists():
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def start_press_hold_dictation() -> int:
+    return _start_press_hold_session(
+        state_path=DICTATE_STATE_PATH,
+        tmp_prefix="voice-dictate-hold-",
+        source_key="dictate_start",
+        preempt_label="dictation",
+        preempt_fn=stop_press_hold_dictation,
+        notify_text="Recording... release keys to transcribe ({language})",
+        start_log_key="dictate_start",
+    )
+
+
+def start_press_hold_command() -> int:
+    return _start_press_hold_session(
+        state_path=COMMAND_STATE_PATH,
+        tmp_prefix="voice-command-hold-",
+        source_key="command_start",
+        preempt_label="command",
+        preempt_fn=stop_press_hold_command,
+        notify_text="Listening for command ({language})... release keys to run",
+        start_log_key="command_start",
+    )
+
+
+def stop_press_hold_dictation() -> int:
+    def _on_dictation_transcription(
+        text: str,
+        detected_language: str | None,
+        language_probability: float | None,
+        selected_language: str,
+    ) -> int:
+        selected_dictation_model = dictation_model_name(selected_language)
         if not is_model_loaded(selected_dictation_model):
             LOGGER.info("Dictation model not yet cached model=%s", selected_dictation_model)
 
-        text, detected_language, language_probability = transcribe(audio_path, language=language, mode="dictate")
         spoken = text.strip()
         probability = language_probability if language_probability is not None else 0.0
         LOGGER.info(
             "Dictation hold language_selected=%s language_detected=%s probability=%.3f text=%s",
-            language,
+            selected_language,
             detected_language,
             probability,
             _sanitize_transcript(spoken),
@@ -401,75 +439,53 @@ def stop_press_hold_dictation() -> int:
         notify("Voice", "Dictation paste failed")
         LOGGER.info("Voice hotkey end status=paste_failed source=dictate_hold text=%s", _sanitize_transcript(spoken))
         return 1
-    finally:
-        DICTATE_STATE_PATH.unlink(missing_ok=True)
-        if tmpdir.exists():
-            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return _stop_press_hold_session(
+        state_path=DICTATE_STATE_PATH,
+        no_active_source="no_active_dictation",
+        no_active_trigger_source="dictate_stop",
+        no_active_notify="No active dictation",
+        state_label="dictation",
+        processing_notify="Key released. Processing dictation...",
+        stale_label="dictation",
+        stop_label="Dictation ffmpeg",
+        no_speech_source="dictate_hold",
+        transcribe_mode="dictate",
+        transcribe_failure_label="Dictation hold",
+        transcribe_failure_source="dictate_hold",
+        on_transcription=_on_dictation_transcription,
+    )
 
 
 def stop_press_hold_command() -> int:
-    if not COMMAND_STATE_PATH.exists():
-        LOGGER.info("Voice hotkey end status=no_active_command source=command_stop")
-        notify("Voice", "No active voice command")
-        return 0
-
-    try:
-        state = json.loads(COMMAND_STATE_PATH.read_text(encoding="utf-8"))
-    except Exception as exc:
-        LOGGER.error("Failed to parse command state: %s", exc)
-        COMMAND_STATE_PATH.unlink(missing_ok=True)
-        return 1
-
-    pid = int(state.get("pid", 0))
-    audio_path = Path(state.get("audio_path", ""))
-    tmpdir = Path(state.get("tmpdir", ""))
-    language = state.get("language", get_saved_dictation_language())
-    required_substrings = _state_required_substrings(state)
-    started_at = state.get("started_at")
-
-    notify("Voice", "Key released. Processing command...")
-
-    if pid > 0:
-        if _is_state_stale(started_at):
-            LOGGER.warning(
-                "Skipping stale command recorder stop pid=%s started_at=%s max_age=%ss",
-                pid,
-                started_at,
-                STATE_MAX_AGE_SECONDS,
-            )
-        else:
-            stop_recording_pid(pid, "Command ffmpeg", required_substrings=required_substrings)
-
-    deadline = time.time() + 2.0
-    while time.time() < deadline:
-        if audio_path.exists() and audio_path.stat().st_size > 0:
-            break
-        time.sleep(0.05)
-
-    try:
-        if not audio_path.exists() or audio_path.stat().st_size == 0:
-            notify("Voice", "No speech captured")
-            LOGGER.info("Voice hotkey end status=no_speech source=voice_hold")
-            return 0
-
-        try:
-            text, detected_language, language_probability = transcribe(audio_path, language=language, mode="command")
-        except Exception as exc:
-            notify("Voice", f"Transcription failed: {type(exc).__name__}")
-            LOGGER.exception("Command hold transcription failed: %s", exc)
-            LOGGER.info("Voice hotkey end status=transcription_failed source=voice_hold")
-            return 1
-
+    def _on_command_transcription(
+        text: str,
+        detected_language: str | None,
+        language_probability: float | None,
+        _selected_language: str,
+    ) -> int:
         return handle_command_text(
             text,
             source="voice_hold",
             language=detected_language,
             language_probability=language_probability,
         )
-    finally:
-        COMMAND_STATE_PATH.unlink(missing_ok=True)
-        if tmpdir.exists():
-            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return _stop_press_hold_session(
+        state_path=COMMAND_STATE_PATH,
+        no_active_source="no_active_command",
+        no_active_trigger_source="command_stop",
+        no_active_notify="No active voice command",
+        state_label="command",
+        processing_notify="Key released. Processing command...",
+        stale_label="command",
+        stop_label="Command ffmpeg",
+        no_speech_source="voice_hold",
+        transcribe_mode="command",
+        transcribe_failure_label="Command hold",
+        transcribe_failure_source="voice_hold",
+        on_transcription=_on_command_transcription,
+    )
 
 
 def run_dictation() -> int:

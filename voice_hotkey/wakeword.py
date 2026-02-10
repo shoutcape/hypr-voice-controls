@@ -20,6 +20,10 @@ from .config import (
 from .logging_utils import LOGGER
 
 
+_WAKEWORD_ENABLED_CACHE: bool | None = None
+_WAKEWORD_ENABLED_MTIME_NS: int | None = None
+
+
 def _resolve_model_paths() -> list[str]:
     if WAKEWORD_MODEL_FILE and WAKEWORD_MODEL_FILE.exists():
         if WAKEWORD_MODEL_FILE.suffix.lower() != ".onnx":
@@ -38,15 +42,35 @@ def _resolve_model_paths() -> list[str]:
 
 
 def _wakeword_enabled() -> bool:
+    global _WAKEWORD_ENABLED_CACHE, _WAKEWORD_ENABLED_MTIME_NS
+
+    try:
+        stat = WAKEWORD_STATE_PATH.stat()
+    except FileNotFoundError:
+        _WAKEWORD_ENABLED_CACHE = WAKEWORD_ENABLED_DEFAULT
+        _WAKEWORD_ENABLED_MTIME_NS = None
+        return WAKEWORD_ENABLED_DEFAULT
+    except Exception as exc:
+        LOGGER.warning("Could not stat wakeword state in daemon: %s", exc)
+        if _WAKEWORD_ENABLED_CACHE is not None:
+            return _WAKEWORD_ENABLED_CACHE
+        return WAKEWORD_ENABLED_DEFAULT
+
+    if _WAKEWORD_ENABLED_MTIME_NS == stat.st_mtime_ns and _WAKEWORD_ENABLED_CACHE is not None:
+        return _WAKEWORD_ENABLED_CACHE
+
     try:
         payload = json.loads(WAKEWORD_STATE_PATH.read_text(encoding="utf-8"))
         enabled = payload.get("enabled")
         if isinstance(enabled, bool):
+            _WAKEWORD_ENABLED_CACHE = enabled
+            _WAKEWORD_ENABLED_MTIME_NS = stat.st_mtime_ns
             return enabled
-    except FileNotFoundError:
-        pass
     except Exception as exc:
         LOGGER.warning("Could not read wakeword state in daemon: %s", exc)
+
+    _WAKEWORD_ENABLED_CACHE = WAKEWORD_ENABLED_DEFAULT
+    _WAKEWORD_ENABLED_MTIME_NS = stat.st_mtime_ns
     return WAKEWORD_ENABLED_DEFAULT
 
 
@@ -86,9 +110,17 @@ def run_wakeword_daemon() -> int:
     from .app import request_daemon
 
     with FFmpegPCMStream(sample_rate_hz=16000, frame_ms=WAKEWORD_FRAME_MS) as stream:
+        read_timeout_ms = max(120, WAKEWORD_FRAME_MS * 3)
         while True:
-            frame = stream.read_frame()
+            frame = stream.read_frame_with_timeout(read_timeout_ms)
             if not frame:
+                if not stream.is_running():
+                    LOGGER.warning("Wakeword stream exited; restarting ffmpeg capture")
+                    stream.stop()
+                    time.sleep(0.05)
+                    stream.start()
+                    empty_frame_streak = 0
+                    continue
                 empty_frame_streak += 1
                 if empty_frame_streak >= empty_frame_restart_threshold:
                     LOGGER.warning("Wakeword stream stalled; restarting ffmpeg capture")
