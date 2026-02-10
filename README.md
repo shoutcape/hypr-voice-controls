@@ -75,8 +75,6 @@ python -m venv ~/.venvs/voice
 ```bash
 export VOICE_COMMAND_MODEL=large-v3-turbo
 export VOICE_DICTATE_MODEL=large-v3-turbo
-export VOICE_COMMAND_MODEL_EN=large-v3-turbo
-export VOICE_DICTATE_MODEL_EN=large-v3-turbo
 export VOICE_DEVICE="cuda,cpu"
 export VOICE_COMPUTE_TYPE=float16
 export VOICE_ASR_BACKEND=faster_whisper

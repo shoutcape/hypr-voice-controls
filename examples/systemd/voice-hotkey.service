@@ -11,8 +11,6 @@ Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
 Environment=VOICE_COMMAND_MODEL=large-v3-turbo
 Environment=VOICE_DICTATE_MODEL=large-v3-turbo
-Environment=VOICE_COMMAND_MODEL_EN=large-v3-turbo
-Environment=VOICE_DICTATE_MODEL_EN=large-v3-turbo
 Environment=VOICE_DICTATION_INJECTOR=wtype
 Environment=VOICE_ASR_BACKEND=faster_whisper
 # Environment=VOICE_ASR_BACKEND=whispercpp_server

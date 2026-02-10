@@ -7,11 +7,9 @@ from .asr_whispercpp import transcribe_file as transcribe_with_whisper_server
 from .config import (
     ASR_BACKEND,
     COMMAND_MODEL_NAME,
-    COMMAND_MODEL_NAME_EN,
     COMPUTE_TYPE_OVERRIDE,
     DEVICE_CANDIDATES,
     DICTATE_MODEL_NAME,
-    DICTATE_MODEL_NAME_EN,
 )
 from .logging_utils import LOGGER
 
@@ -77,14 +75,10 @@ def compute_type_for_device(device: str) -> str:
 
 
 def command_model_name(language: str | None = None) -> str:
-    if language == "en":
-        return COMMAND_MODEL_NAME_EN
     return COMMAND_MODEL_NAME
 
 
 def dictation_model_name(language: str | None = None) -> str:
-    if language == "en":
-        return DICTATE_MODEL_NAME_EN
     return DICTATE_MODEL_NAME
 
 
@@ -175,7 +169,6 @@ def preload_models() -> None:
         return
     for model_name in {
         COMMAND_MODEL_NAME,
-        COMMAND_MODEL_NAME_EN,
     }:
         try:
             get_whisper_model(model_name)

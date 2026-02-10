@@ -99,8 +99,8 @@ Restart=on-failure
 RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
-Environment=VOICE_COMMAND_MODEL_EN=large-v3-turbo
-Environment=VOICE_DICTATE_MODEL_EN=large-v3-turbo
+Environment=VOICE_COMMAND_MODEL=large-v3-turbo
+Environment=VOICE_DICTATE_MODEL=large-v3-turbo
 
 [Install]
 WantedBy=default.target
@@ -201,8 +201,6 @@ You can tune behavior via env vars in the service file:
 ```ini
 Environment=VOICE_COMMAND_MODEL=large-v3-turbo
 Environment=VOICE_DICTATE_MODEL=large-v3-turbo
-Environment=VOICE_COMMAND_MODEL_EN=large-v3-turbo
-Environment=VOICE_DICTATE_MODEL_EN=large-v3-turbo
 Environment=VOICE_DEVICE=cuda,cpu
 Environment=VOICE_COMPUTE_TYPE=float16
 Environment=VOICE_DAEMON_START_DELAY=0.05

@@ -37,8 +37,10 @@ def env_bool(name: str, default: bool) -> bool:
 AUDIO_SECONDS = env_int("VOICE_AUDIO_SECONDS", 4)
 COMMAND_MODEL_NAME = os.environ.get("VOICE_COMMAND_MODEL", "large-v3-turbo")
 DICTATE_MODEL_NAME = os.environ.get("VOICE_DICTATE_MODEL", "large-v3-turbo")
-COMMAND_MODEL_NAME_EN = os.environ.get("VOICE_COMMAND_MODEL_EN", "large-v3-turbo")
-DICTATE_MODEL_NAME_EN = os.environ.get("VOICE_DICTATE_MODEL_EN", "large-v3-turbo")
+if "VOICE_COMMAND_MODEL" not in os.environ and "VOICE_COMMAND_MODEL_EN" in os.environ:
+    COMMAND_MODEL_NAME = os.environ["VOICE_COMMAND_MODEL_EN"]
+if "VOICE_DICTATE_MODEL" not in os.environ and "VOICE_DICTATE_MODEL_EN" in os.environ:
+    DICTATE_MODEL_NAME = os.environ["VOICE_DICTATE_MODEL_EN"]
 DEVICE_CANDIDATES = [d.strip() for d in os.environ.get("VOICE_DEVICE", "cuda,cpu").split(",") if d.strip()]
 COMPUTE_TYPE_OVERRIDE = os.environ.get("VOICE_COMPUTE_TYPE")
 AUDIO_BACKEND = os.environ.get("VOICE_AUDIO_BACKEND", "pulse")
