@@ -87,6 +87,8 @@ def run_endpointed_command_session(
     notify("Voice", prompt_text)
 
     started_at = time.time()
+    speech_started_at: float | None = None
+    last_speech_at: float | None = None
     preroll_bytes = _load_wake_preroll() if source == "wake_start" else b""
     audio_bytes = bytearray(preroll_bytes)
     peak_rms = 0
@@ -95,9 +97,10 @@ def run_endpointed_command_session(
     with FFmpegPCMStream(sample_rate_hz=AUDIO_SAMPLE_RATE_HZ, frame_ms=SESSION_FRAME_MS) as stream:
         read_timeout_ms = max(200, SESSION_FRAME_MS * 4)
         while True:
-            elapsed_ms = int((time.time() - started_at) * 1000)
-            if elapsed_ms >= session_max_seconds * 1000:
-                LOGGER.info("Endpointed command session timed out max_seconds=%s", session_max_seconds)
+            now = time.time()
+            elapsed_ms = int((now - started_at) * 1000)
+            if speech_started_at is None and elapsed_ms >= session_max_seconds * 1000:
+                LOGGER.info("Endpointed command session timed out before speech max_seconds=%s", session_max_seconds)
                 break
 
             if start_timeout_ms > 0 and not vad.has_started and elapsed_ms >= start_timeout_ms:
@@ -114,6 +117,22 @@ def run_endpointed_command_session(
             has_started, endpoint, rms = vad.update(frame)
             if rms > peak_rms:
                 peak_rms = rms
+
+            if has_started and speech_started_at is None:
+                speech_started_at = now
+
+            if rms >= active_vad_rms_threshold:
+                last_speech_at = now
+
+            if has_started and last_speech_at is not None:
+                inactive_ms = int((now - last_speech_at) * 1000)
+                if inactive_ms >= session_max_seconds * 1000:
+                    LOGGER.info(
+                        "Endpointed command session inactivity timeout max_seconds=%s inactive_ms=%s",
+                        session_max_seconds,
+                        inactive_ms,
+                    )
+                    break
 
             if has_started and endpoint:
                 break
