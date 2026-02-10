@@ -99,8 +99,8 @@ Restart=on-failure
 RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
-Environment=VOICE_COMMAND_MODEL_EN=large-v3
-Environment=VOICE_DICTATE_MODEL_EN=medium.en
+Environment=VOICE_COMMAND_MODEL_EN=large-v3-turbo
+Environment=VOICE_DICTATE_MODEL_EN=large-v3-turbo
 
 [Install]
 WantedBy=default.target
@@ -165,6 +165,16 @@ After wake trigger, say mode intent first:
 - `dictate`, `dictation`, or `write` -> dictation mode
 - unclear intent falls back to command matching
 
+You can also use inline payload to skip the second capture:
+
+- `command <payload>` (for example: `command volume down`)
+- `dictate <payload>` (for example: `dictate this is a quick note`)
+
+Without an explicit `command`/`dictate` keyword, wake mode uses a simple word-count heuristic:
+
+- 1-3 words -> command
+- 4+ words -> dictation
+
 ## 6) Supported command actions
 
 The command path uses your JSON command map (`~/.config/hypr/voice-commands.json`).
@@ -189,10 +199,10 @@ Optional private overrides:
 You can tune behavior via env vars in the service file:
 
 ```ini
-Environment=VOICE_COMMAND_MODEL=large-v3
-Environment=VOICE_DICTATE_MODEL=medium
-Environment=VOICE_COMMAND_MODEL_EN=large-v3
-Environment=VOICE_DICTATE_MODEL_EN=medium.en
+Environment=VOICE_COMMAND_MODEL=large-v3-turbo
+Environment=VOICE_DICTATE_MODEL=large-v3-turbo
+Environment=VOICE_COMMAND_MODEL_EN=large-v3-turbo
+Environment=VOICE_DICTATE_MODEL_EN=large-v3-turbo
 Environment=VOICE_DEVICE=cuda,cpu
 Environment=VOICE_COMPUTE_TYPE=float16
 Environment=VOICE_DAEMON_START_DELAY=0.05
@@ -204,6 +214,11 @@ Environment=VOICE_TTS_ENABLED=false
 Environment=VOICE_TTS_COOLDOWN_MS=900
 Environment=VOICE_TTS_MAX_CHARS=90
 Environment=VOICE_STATE_MAX_AGE_SECONDS=900
+Environment=VOICE_WAKE_DICTATE_SESSION_MAX_SECONDS=16
+Environment=VOICE_WAKE_INTENT_VAD_END_SILENCE_MS=700
+Environment=VOICE_WAKE_DICTATE_VAD_END_SILENCE_MS=1800
+Environment=VOICE_WAKEWORD_FRAME_MS=40
+Environment=VOICE_WAKEWORD_PREROLL_MS=200
 ```
 
 After edits:

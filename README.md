@@ -73,10 +73,10 @@ python -m venv ~/.venvs/voice
 ## Environment overrides
 
 ```bash
-export VOICE_COMMAND_MODEL=large-v3
-export VOICE_DICTATE_MODEL=medium
-export VOICE_COMMAND_MODEL_EN=large-v3
-export VOICE_DICTATE_MODEL_EN=medium.en
+export VOICE_COMMAND_MODEL=large-v3-turbo
+export VOICE_DICTATE_MODEL=large-v3-turbo
+export VOICE_COMMAND_MODEL_EN=large-v3-turbo
+export VOICE_DICTATE_MODEL_EN=large-v3-turbo
 export VOICE_DEVICE="cuda,cpu"
 export VOICE_COMPUTE_TYPE=float16
 export VOICE_ASR_BACKEND=faster_whisper
@@ -87,10 +87,13 @@ export VOICE_SAMPLE_RATE_HZ=16000
 export VOICE_FRAME_MS=20
 export VOICE_SESSION_MAX_SECONDS=12
 export VOICE_WAKE_SESSION_MAX_SECONDS=8
+export VOICE_WAKE_DICTATE_SESSION_MAX_SECONDS=16
 export VOICE_WAKE_START_SPEECH_TIMEOUT_MS=7000
 export VOICE_WAKE_VAD_RMS_THRESHOLD=80
 export VOICE_WAKE_VAD_MIN_SPEECH_MS=20
 export VOICE_WAKE_VAD_END_SILENCE_MS=300
+export VOICE_WAKE_INTENT_VAD_END_SILENCE_MS=700
+export VOICE_WAKE_DICTATE_VAD_END_SILENCE_MS=1800
 export VOICE_VAD_RMS_THRESHOLD=600
 export VOICE_VAD_MIN_SPEECH_MS=120
 export VOICE_VAD_END_SILENCE_MS=800
@@ -111,10 +114,15 @@ export VOICE_WAKEWORD_THRESHOLD=0.72
 export VOICE_WAKEWORD_MIN_CONSECUTIVE=3
 export VOICE_WAKEWORD_COOLDOWN_MS=3000
 export VOICE_WAKEWORD_NO_SPEECH_REARM_MS=5000
-export VOICE_WAKEWORD_FRAME_MS=80
+export VOICE_WAKEWORD_FRAME_MS=40
+export VOICE_WAKEWORD_PREROLL_MS=200
 export VOICE_WAKE_GREETING_ENABLED=true
 export VOICE_WAKE_GREETING_TEXT="hello"
 ```
+
+Recommended quality-focused setup:
+
+- use `large-v3-turbo` for both command and dictation models
 
 ## Wakeword daemon (optional)
 
@@ -135,6 +143,18 @@ When wakeword triggers `wake-start`, the daemon now runs a short intent capture 
 - say `command` to run command mode
 - say `dictate`, `dictation`, or `write` for dictation mode
 - if intent is unclear, it falls back to command matching (backward-compatible)
+
+You can also do single-shot wake utterances to skip the follow-up capture:
+
+- `command <payload>` (example: `command lock screen`)
+- `dictate <payload>` (example: `dictate hello from wake mode`)
+
+If you do not say an explicit intent keyword, wake mode uses a length heuristic:
+
+- 1-3 words -> command path
+- 4+ words -> dictation path
+
+Wake prefix variants include `hey hyper`, `hey hypr`, `heyhyper`, and `heyhypr`.
 
 ## Private spoken commands (Hypr config)
 
