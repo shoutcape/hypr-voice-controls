@@ -1,7 +1,7 @@
+from array import array
 import tempfile
 import time
 import wave
-from array import array
 from pathlib import Path
 
 from .audio_stream import FFmpegPCMStream

@@ -1,5 +1,18 @@
 import math
-from array import array
+
+
+def _rms_pcm16_le(frame: bytes) -> int:
+    if len(frame) < 2:
+        return 0
+    try:
+        samples = memoryview(frame).cast("h")
+    except TypeError:
+        return 0
+    count = len(samples)
+    if count == 0:
+        return 0
+    square_sum = sum(sample * sample for sample in samples)
+    return int(math.sqrt(square_sum / count))
 
 
 class EndpointVAD:
@@ -27,15 +40,7 @@ class EndpointVAD:
         if not frame:
             return self._has_started, False, 0
 
-        samples = array("h")
-        samples.frombytes(frame)
-        if not samples:
-            return self._has_started, False, 0
-
-        square_sum = 0
-        for sample in samples:
-            square_sum += sample * sample
-        rms = int(math.sqrt(square_sum / len(samples)))
+        rms = _rms_pcm16_le(frame)
         is_speech = rms >= self.rms_threshold
 
         if is_speech:

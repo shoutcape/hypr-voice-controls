@@ -80,6 +80,8 @@ def run_wakeword_daemon() -> int:
     streak_by_name: dict[str, int] = {}
     preroll_frames = max(1, WAKEWORD_PREROLL_MS // max(1, WAKEWORD_FRAME_MS))
     ring: deque[bytes] = deque(maxlen=preroll_frames)
+    empty_frame_streak = 0
+    empty_frame_restart_threshold = max(8, 2000 // max(1, WAKEWORD_FRAME_MS))
 
     from .app import request_daemon
 
@@ -87,11 +89,23 @@ def run_wakeword_daemon() -> int:
         while True:
             frame = stream.read_frame()
             if not frame:
+                empty_frame_streak += 1
+                if empty_frame_streak >= empty_frame_restart_threshold:
+                    LOGGER.warning("Wakeword stream stalled; restarting ffmpeg capture")
+                    stream.stop()
+                    time.sleep(0.05)
+                    stream.start()
+                    empty_frame_streak = 0
                 time.sleep(0.02)
                 continue
+            empty_frame_streak = 0
             ring.append(frame)
 
-            scores = model.predict(np.frombuffer(frame, dtype=np.int16))
+            try:
+                scores = model.predict(np.frombuffer(frame, dtype=np.int16))
+            except Exception as exc:
+                LOGGER.warning("Wakeword model predict failed: %s", exc)
+                continue
             if not scores:
                 continue
 

@@ -153,6 +153,7 @@ def transcribe(audio_path: Path, language: str | None = None, mode: str = "comma
     transcribe_kwargs = {
         "language": language,
         "vad_filter": True,
+        "without_timestamps": True,
     }
     if mode == "command":
         transcribe_kwargs.update(
