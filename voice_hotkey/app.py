@@ -45,9 +45,7 @@ from .config import (
 )
 from .integrations import (
     inject_text_into_focused_input,
-    mute_discord_mic_streams_for_dictation,
     notify,
-    restore_discord_mic_streams_after_dictation,
     run_command,
 )
 from .logging_utils import LOGGER
@@ -248,7 +246,6 @@ def start_press_hold_dictation() -> int:
     language = get_saved_dictation_language()
     tmpdir = tempfile.mkdtemp(prefix="voice-dictate-hold-")
     audio_path = Path(tmpdir) / "capture.wav"
-    discord_muted_ids = mute_discord_mic_streams_for_dictation()
 
     cmd = [
         "ffmpeg",
@@ -269,7 +266,6 @@ def start_press_hold_dictation() -> int:
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
     except FileNotFoundError:
-        restore_discord_mic_streams_after_dictation(discord_muted_ids)
         notify("Voice", "ffmpeg not found")
         LOGGER.error("Could not start dictation recorder: ffmpeg not found")
         return 1
@@ -280,7 +276,6 @@ def start_press_hold_dictation() -> int:
         "pid_required_substrings": ["ffmpeg", str(audio_path)],
         "language": language,
         "started_at": time.time(),
-        "discord_muted_source_output_ids": discord_muted_ids,
     }
     write_private_text(DICTATE_STATE_PATH, json.dumps(state))
     notify("Voice", f"Recording... release keys to transcribe ({language})")
@@ -352,10 +347,6 @@ def stop_press_hold_dictation() -> int:
     language = state.get("language", get_saved_dictation_language())
     required_substrings = _state_required_substrings(state)
     started_at = state.get("started_at")
-    discord_muted_ids_raw = state.get("discord_muted_source_output_ids", [])
-    discord_muted_ids = [
-        output_id for output_id in discord_muted_ids_raw if isinstance(output_id, int) and output_id >= 0
-    ]
 
     notify("Voice", "Key released. Processing dictation...")
 
@@ -411,7 +402,6 @@ def stop_press_hold_dictation() -> int:
         LOGGER.info("Voice hotkey end status=paste_failed source=dictate_hold text=%s", _sanitize_transcript(spoken))
         return 1
     finally:
-        restore_discord_mic_streams_after_dictation(discord_muted_ids)
         DICTATE_STATE_PATH.unlink(missing_ok=True)
         if tmpdir.exists():
             shutil.rmtree(tmpdir, ignore_errors=True)

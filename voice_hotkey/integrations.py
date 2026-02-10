@@ -1,7 +1,6 @@
 import shutil
 import subprocess
 import time
-import json
 
 from .config import (
     DICTATION_INJECTOR,
@@ -16,104 +15,6 @@ from .logging_utils import LOGGER
 
 _LAST_TTS_AT = 0.0
 _LAST_TTS_TEXT = ""
-
-
-def _run_pactl(args: list[str], *, timeout: int = 3) -> subprocess.CompletedProcess[str] | None:
-    if not shutil.which("pactl"):
-        return None
-
-    try:
-        return subprocess.run(
-            ["pactl", *args],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except Exception as exc:
-        LOGGER.debug("pactl command failed args=%s err=%s", args, exc)
-        return None
-
-
-def _list_discord_source_outputs() -> list[tuple[int, bool]]:
-    proc = _run_pactl(["-f", "json", "list", "source-outputs"], timeout=4)
-    if proc is None or proc.returncode != 0:
-        return []
-
-    try:
-        payload = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        LOGGER.debug("Could not parse pactl JSON source-outputs payload")
-        return []
-
-    if not isinstance(payload, list):
-        return []
-
-    matches: list[tuple[int, bool]] = []
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        properties = item.get("properties")
-        if not isinstance(properties, dict):
-            continue
-        media_class = str(properties.get("media.class", ""))
-        if media_class != "Stream/Input/Audio":
-            continue
-
-        identifiers = [
-            str(properties.get("pipewire.access.portal.app_id", "")),
-            str(properties.get("application.process.binary", "")),
-            str(properties.get("application.name", "")),
-        ]
-        if not any("discord" in value.lower() for value in identifiers):
-            continue
-
-        output_id = item.get("index")
-        is_muted = bool(item.get("mute", False))
-        if isinstance(output_id, int):
-            matches.append((output_id, is_muted))
-
-    return matches
-
-
-def mute_discord_mic_streams_for_dictation() -> list[int]:
-    muted_ids: list[int] = []
-    for output_id, is_muted in _list_discord_source_outputs():
-        if is_muted:
-            continue
-        proc = _run_pactl(["set-source-output-mute", str(output_id), "1"])
-        if proc is None:
-            continue
-        if proc.returncode == 0:
-            muted_ids.append(output_id)
-        else:
-            LOGGER.debug(
-                "Failed to mute Discord source-output id=%s rc=%s stderr=%s",
-                output_id,
-                proc.returncode,
-                _truncate(proc.stderr.strip()),
-            )
-
-    if muted_ids:
-        LOGGER.info("Muted Discord source-outputs for dictation ids=%s", muted_ids)
-    return muted_ids
-
-
-def restore_discord_mic_streams_after_dictation(muted_ids: list[int]) -> None:
-    for output_id in muted_ids:
-        proc = _run_pactl(["set-source-output-mute", str(output_id), "0"])
-        if proc is None:
-            continue
-        if proc.returncode != 0:
-            LOGGER.debug(
-                "Failed to unmute Discord source-output id=%s rc=%s stderr=%s",
-                output_id,
-                proc.returncode,
-                _truncate(proc.stderr.strip()),
-            )
-
-    if muted_ids:
-        LOGGER.info("Restored Discord source-outputs after dictation ids=%s", muted_ids)
 
 
 def _truncate(value: str) -> str:
