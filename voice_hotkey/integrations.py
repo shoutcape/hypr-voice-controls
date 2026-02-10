@@ -2,8 +2,19 @@ import shutil
 import subprocess
 import time
 
-from .config import DICTATION_INJECTOR, LOG_COMMAND_OUTPUT_MAX
+from .config import (
+    DICTATION_INJECTOR,
+    LOG_COMMAND_OUTPUT_MAX,
+    NOTIFY_TIMEOUT_MS,
+    TTS_COOLDOWN_MS,
+    TTS_ENABLED,
+    TTS_MAX_CHARS,
+)
 from .logging_utils import LOGGER
+
+
+_LAST_TTS_AT = 0.0
+_LAST_TTS_TEXT = ""
 
 
 def _truncate(value: str) -> str:
@@ -12,10 +23,94 @@ def _truncate(value: str) -> str:
     return f"{value[:LOG_COMMAND_OUTPUT_MAX]}..."
 
 
+def _notify_color(body: str) -> str:
+    normalized = body.lower()
+    error_signals = ("failed", "missing", "error", "unavailable", "no speech")
+    success_signals = ("enabled", "disabled", "pasted", " -> ")
+    if any(token in normalized for token in error_signals):
+        return "rgb(ff6b6b)"
+    if any(token in normalized for token in success_signals):
+        return "rgb(87d37c)"
+    return "rgb(88ccff)"
+
+
+def _speak_feedback(text: str) -> None:
+    if not TTS_ENABLED:
+        return
+
+    clean = " ".join(text.split()).strip()
+    if not clean:
+        return
+
+    capped = clean[:TTS_MAX_CHARS]
+    global _LAST_TTS_AT, _LAST_TTS_TEXT
+    now = time.time()
+    if capped == _LAST_TTS_TEXT and now - _LAST_TTS_AT < (TTS_COOLDOWN_MS / 1000.0):
+        return
+
+    cmd: list[str] | None = None
+    if shutil.which("spd-say"):
+        cmd = ["spd-say", capped]
+    elif shutil.which("espeak"):
+        cmd = ["espeak", capped]
+
+    if not cmd:
+        return
+
+    try:
+        subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        _LAST_TTS_AT = now
+        _LAST_TTS_TEXT = capped
+    except Exception as exc:
+        LOGGER.debug("TTS feedback failed cmd=%s err=%s", cmd, exc)
+
+
 def notify(title: str, body: str) -> None:
+    clean_title = " ".join(title.split()).strip() or "Voice"
+    clean_body = " ".join(body.split()).strip()
+    if not clean_body:
+        return
+
+    if shutil.which("hyprctl"):
+        try:
+            subprocess.run(
+                ["hyprctl", "notify", "-1", str(NOTIFY_TIMEOUT_MS), _notify_color(clean_body), f"{clean_title}: {clean_body}"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+            _speak_feedback(clean_body)
+            return
+        except Exception as exc:
+            LOGGER.debug("hyprctl notify failed: %s", exc)
+
     if shutil.which("notify-send"):
         try:
-            subprocess.run(["notify-send", "-a", "voice-hotkey", title, body], check=False, timeout=2)
+            subprocess.run(
+                [
+                    "notify-send",
+                    "-a",
+                    "voice-hotkey",
+                    "-u",
+                    "low",
+                    "-t",
+                    str(NOTIFY_TIMEOUT_MS),
+                    "-h",
+                    "string:x-canonical-private-synchronous:voice-hotkey",
+                    clean_title,
+                    clean_body,
+                ],
+                check=False,
+                timeout=2,
+            )
+            _speak_feedback(clean_body)
         except Exception as exc:
             LOGGER.debug("notify-send failed: %s", exc)
 

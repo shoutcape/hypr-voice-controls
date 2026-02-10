@@ -76,6 +76,17 @@ WAKE_PREFIXES = (
     "hey hypr",
 )
 
+WAKE_INTENT_COMMAND_KEYWORDS = {
+    "command",
+    "commands",
+}
+
+WAKE_INTENT_DICTATE_KEYWORDS = {
+    "dictate",
+    "dictation",
+    "write",
+}
+
 
 def _sanitize_transcript(value: str) -> str:
     if LOG_TRANSCRIPTS:
@@ -483,6 +494,71 @@ def run_dictation() -> int:
         return 1
 
 
+def _classify_wake_intent(clean_text: str) -> str | None:
+    tokens = set(clean_text.split())
+    if tokens.intersection(WAKE_INTENT_DICTATE_KEYWORDS):
+        return "dictate"
+    if tokens.intersection(WAKE_INTENT_COMMAND_KEYWORDS):
+        return "command"
+    return None
+
+
+def handle_dictation_text(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
+    spoken = raw_text.strip()
+    probability = language_probability if language_probability is not None else 0.0
+    LOGGER.info(
+        "Dictation language_detected=%s probability=%.3f source=%s text=%s",
+        language,
+        probability,
+        source,
+        _sanitize_transcript(spoken),
+    )
+
+    if not spoken:
+        notify("Voice", "No speech detected")
+        LOGGER.info("Voice hotkey end status=no_speech source=%s", source)
+        return 0
+
+    if inject_text_into_focused_input(spoken):
+        notify("Voice", "Dictation pasted")
+        LOGGER.info("Voice hotkey end status=ok source=%s text=%s", source, _sanitize_transcript(spoken))
+        return 0
+
+    notify("Voice", "Dictation paste failed")
+    LOGGER.info("Voice hotkey end status=paste_failed source=%s text=%s", source, _sanitize_transcript(spoken))
+    return 1
+
+
+def run_wake_followup_session(intent: str, language: str) -> int:
+    if intent == "dictate":
+        notify("Voice", "Wake mode: dictation")
+        return run_endpointed_command_session(
+            language=language,
+            source="wake_dictate",
+            command_handler=handle_dictation_text,
+            max_seconds=WAKE_SESSION_MAX_SECONDS,
+            start_speech_timeout_ms=WAKE_START_SPEECH_TIMEOUT_MS,
+            vad_rms_threshold=WAKE_VAD_RMS_THRESHOLD,
+            vad_min_speech_ms=WAKE_VAD_MIN_SPEECH_MS,
+            vad_end_silence_ms=WAKE_VAD_END_SILENCE_MS,
+            prompt_text="Wake heard, speak dictation...",
+            stt_mode="dictate",
+        )
+
+    notify("Voice", "Wake mode: command")
+    return run_endpointed_command_session(
+        language=language,
+        source="wake_command",
+        command_handler=handle_command_text,
+        max_seconds=WAKE_SESSION_MAX_SECONDS,
+        start_speech_timeout_ms=WAKE_START_SPEECH_TIMEOUT_MS,
+        vad_rms_threshold=WAKE_VAD_RMS_THRESHOLD,
+        vad_min_speech_ms=WAKE_VAD_MIN_SPEECH_MS,
+        vad_end_silence_ms=WAKE_VAD_END_SILENCE_MS,
+        prompt_text="Wake heard, speak command...",
+    )
+
+
 def handle_command_text(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
     clean = normalize(raw_text)
     if source == "wake_start":
@@ -587,16 +663,44 @@ def handle_input(input_mode: str) -> int:
             WAKE_VAD_END_SILENCE_MS,
         )
         _say_wake_greeting()
+        wake_language = get_saved_dictation_language()
+
+        def _wake_intent_handler(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
+            clean = normalize(raw_text)
+            clean = _strip_wake_prefix(clean)
+            intent = _classify_wake_intent(clean)
+            probability = language_probability if language_probability is not None else 0.0
+            LOGGER.info(
+                "Wake intent language=%s probability=%.3f raw=%s normalized=%s intent=%s",
+                language,
+                probability,
+                _sanitize_transcript(raw_text),
+                _sanitize_transcript(clean),
+                intent,
+            )
+
+            if not intent:
+                LOGGER.info("Wake intent unclear; falling back to command matching")
+                return handle_command_text(
+                    raw_text,
+                    source="wake_start",
+                    language=language,
+                    language_probability=language_probability,
+                )
+
+            selected_language = language or wake_language
+            return run_wake_followup_session(intent, selected_language)
+
         return run_endpointed_command_session(
-            language=get_saved_dictation_language(),
+            language=wake_language,
             source="wake_start",
-            command_handler=handle_command_text,
+            command_handler=_wake_intent_handler,
             max_seconds=WAKE_SESSION_MAX_SECONDS,
             start_speech_timeout_ms=WAKE_START_SPEECH_TIMEOUT_MS,
             vad_rms_threshold=WAKE_VAD_RMS_THRESHOLD,
             vad_min_speech_ms=WAKE_VAD_MIN_SPEECH_MS,
             vad_end_silence_ms=WAKE_VAD_END_SILENCE_MS,
-            prompt_text="Wake heard, speak command...",
+            prompt_text="Wake heard, say command or dictate...",
         )
 
     if input_mode == "command-auto":

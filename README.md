@@ -46,8 +46,9 @@ For private spoken-command definitions, copy `examples/hypr/voice-commands.json`
 - cached model loading and background dictation warmup
 - optional whisper.cpp server backend via `VOICE_ASR_BACKEND=whispercpp_server`
 - wake-word runtime toggles (`wakeword-enable|disable|toggle|status`) with state under `~/.local/state/voice-hotkey-wakeword.json`
-- endpointed command sessions for wake starts (`wake-start`) and manual tests (`command-auto`)
+- endpointed wake sessions with intent routing (`wake-start`): say `command` or `dictate`, then speak payload
 - optional always-on wakeword daemon via `--wakeword-daemon` (openWakeWord)
+- Hyprland-native notifications with optional spoken feedback (TTS)
 
 ## Dependencies
 
@@ -55,6 +56,7 @@ For private spoken-command definitions, copy `examples/hypr/voice-commands.json`
 - optional but recommended: `hyprctl`, `notify-send`, `pamixer`, `wtype`
 - optional for clipboard fallback dictation: `wl-copy`
 - optional for wake greeting voice: `spd-say` or `espeak`
+- optional for spoken feedback (TTS): `spd-say` or `espeak`
 - python: `faster-whisper`
 - optional python for wakeword daemon: `openwakeword`, `numpy`
 
@@ -97,6 +99,10 @@ export VOICE_OVERLAY_ENABLED=true
 export VOICE_DAEMON_MAX_REQUEST_BYTES=8192
 export VOICE_LOG_TRANSCRIPTS=false
 export VOICE_LOG_COMMAND_OUTPUT_MAX=300
+export VOICE_NOTIFY_TIMEOUT_MS=2200
+export VOICE_TTS_ENABLED=false
+export VOICE_TTS_COOLDOWN_MS=900
+export VOICE_TTS_MAX_CHARS=90
 export VOICE_STATE_MAX_AGE_SECONDS=900
 export VOICE_WAKEWORD_ENABLED=false
 export VOICE_WAKEWORD_MODEL_PATH="$HOME/.config/hypr-voice-controls/wakeword/"
@@ -121,6 +127,14 @@ Run always-on wake detection (custom model files in `~/.config/hypr-voice-contro
 Systemd template:
 
 - `examples/systemd/wakeword.service`
+
+### Wake mode selection
+
+When wakeword triggers `wake-start`, the daemon now runs a short intent capture first:
+
+- say `command` to run command mode
+- say `dictate`, `dictation`, or `write` for dictation mode
+- if intent is unclear, it falls back to command matching (backward-compatible)
 
 ## Private spoken commands (Hypr config)
 

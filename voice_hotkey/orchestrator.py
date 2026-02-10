@@ -69,6 +69,7 @@ def run_endpointed_command_session(
     vad_min_speech_ms: int | None = None,
     vad_end_silence_ms: int | None = None,
     prompt_text: str = "Listening...",
+    stt_mode: str = "command",
 ) -> int:
     session_max_seconds = max_seconds if isinstance(max_seconds, int) and max_seconds > 0 else SESSION_MAX_SECONDS
     start_timeout_ms = start_speech_timeout_ms if isinstance(start_speech_timeout_ms, int) and start_speech_timeout_ms > 0 else 0
@@ -132,7 +133,7 @@ def run_endpointed_command_session(
         audio_path = Path(tmpdir) / "capture.wav"
         _write_wav(audio_path, bytes(audio_bytes), AUDIO_SAMPLE_RATE_HZ)
         try:
-            text, detected_language, language_probability = transcribe(audio_path, language=language, mode="command")
+            text, detected_language, language_probability = transcribe(audio_path, language=language, mode=stt_mode)
         except Exception as exc:
             notify("Voice", f"Transcription failed: {type(exc).__name__}")
             LOGGER.exception("Endpointed command transcription failed: %s", exc)

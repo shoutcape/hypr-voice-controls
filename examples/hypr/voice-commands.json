@@ -1,7 +1,7 @@
 [
   {
     "label": "Workspace 1",
-    "pattern": "^(?=.*\\b(workspace|tyotila|työtila)\\b)(?=.*\\b(one|1|yksi|ykkonen|ykkönen)\\b).*$",
+    "pattern": "^(?=.*\\bworkspace\\b)(?=.*\\b(one|1)\\b).*$",
     "argv": [
       "hyprctl",
       "dispatch",
@@ -11,7 +11,7 @@
   },
   {
     "label": "Workspace 2",
-    "pattern": "^(?=.*\\b(workspace|tyotila|työtila)\\b)(?=.*\\b(two|2|kaksi|kakkonen)\\b).*$",
+    "pattern": "^(?=.*\\bworkspace\\b)(?=.*\\b(two|2)\\b).*$",
     "argv": [
       "hyprctl",
       "dispatch",
@@ -21,7 +21,7 @@
   },
   {
     "label": "Volume Up",
-    "pattern": "^(volume up|((laita )?(aani|ääni)(ta)? )?kovemmalle|.*(kovem|kuvem).*|.*lisää.*(ääni|ääntä|aani).*|louder|william up|volyum up)$",
+    "pattern": "^(volume up|louder|turn (the )?volume up|increase volume|raise volume)$",
     "argv": [
       "pamixer",
       "-i",
@@ -30,7 +30,7 @@
   },
   {
     "label": "Volume Down",
-    "pattern": "^(volume down|((laita )?(aani|ääni)(ta)? )?hiljemmalle|.*hil(jem|jim|imm).*|lower|william down|volyum down|hyviemmalle)$",
+    "pattern": "^(volume down|lower|turn (the )?volume down|decrease volume|reduce volume)$",
     "argv": [
       "pamixer",
       "-d",
@@ -39,32 +39,10 @@
   },
   {
     "label": "Lock Screen",
-    "pattern": "^(lock( screen)?|lukitse( naytto| näyttö)?|.*\\block\\b.*)$",
+    "pattern": "^(lock( screen)?|.*\\block\\b.*)$",
     "argv": [
       "loginctl",
       "lock-session"
     ]
-  },
-  {
-    "label": "Launch ARC Raiders",
-    "pattern": "^((open|launch|start|run|play) )?(arc ?raiders|arc ?riders|arcraiders|arcriders|arcader|arced|our creators|or creators|are creators)$",
-    "argv": [
-      "hyprctl",
-      "dispatch",
-      "exec",
-      "[workspace 3 silent] steam steam://rungameid/1808500"
-    ],
-    "enabled": false
-  },
-  {
-    "label": "Open Obsidian",
-    "pattern": "^((open|launch|start) )?obsidian$",
-    "argv": [
-      "hyprctl",
-      "dispatch",
-      "exec",
-      "uwsm-app -- obsidian"
-    ],
-    "enabled": false
   }
 ]

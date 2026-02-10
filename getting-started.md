@@ -15,6 +15,8 @@ On Arch/Omarchy:
 
 ```bash
 sudo pacman -S --needed ffmpeg pamixer libnotify wl-clipboard
+# optional TTS feedback voices
+sudo pacman -S --needed speech-dispatcher espeak-ng
 ```
 
 Python environment:
@@ -157,6 +159,12 @@ Optional wake daemon smoke test (requires model file under `~/.config/hypr-voice
 /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --wakeword-daemon
 ```
 
+After wake trigger, say mode intent first:
+
+- `command` -> command mode
+- `dictate`, `dictation`, or `write` -> dictation mode
+- unclear intent falls back to command matching
+
 ## 6) Supported command actions
 
 The command path uses your JSON command map (`~/.config/hypr/voice-commands.json`).
@@ -191,6 +199,10 @@ Environment=VOICE_DAEMON_START_DELAY=0.05
 Environment=VOICE_DAEMON_MAX_REQUEST_BYTES=8192
 Environment=VOICE_LOG_TRANSCRIPTS=false
 Environment=VOICE_LOG_COMMAND_OUTPUT_MAX=300
+Environment=VOICE_NOTIFY_TIMEOUT_MS=2200
+Environment=VOICE_TTS_ENABLED=false
+Environment=VOICE_TTS_COOLDOWN_MS=900
+Environment=VOICE_TTS_MAX_CHARS=90
 Environment=VOICE_STATE_MAX_AGE_SECONDS=900
 ```
 

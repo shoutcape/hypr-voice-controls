@@ -115,7 +115,7 @@ def get_user_compiled_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
 
 
 def normalize(text: str) -> str:
-    clean = re.sub(r"[^a-z0-9äöå ]+", "", text.lower())
+    clean = re.sub(r"[^a-z0-9 ]+", "", text.lower())
     clean = re.sub(r"\s+", " ", clean).strip()
     clean = re.sub(r"^(ja|and|please|pliis|hei)\s+", "", clean)
     return clean
