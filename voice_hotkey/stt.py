@@ -8,12 +8,10 @@ from .config import (
     ASR_BACKEND,
     COMMAND_MODEL_NAME,
     COMMAND_MODEL_NAME_EN,
-    COMMAND_MODEL_NAME_FI,
     COMPUTE_TYPE_OVERRIDE,
     DEVICE_CANDIDATES,
     DICTATE_MODEL_NAME,
     DICTATE_MODEL_NAME_EN,
-    DICTATE_MODEL_NAME_FI,
 )
 from .logging_utils import LOGGER
 
@@ -81,16 +79,12 @@ def compute_type_for_device(device: str) -> str:
 def command_model_name(language: str | None = None) -> str:
     if language == "en":
         return COMMAND_MODEL_NAME_EN
-    if language == "fi":
-        return COMMAND_MODEL_NAME_FI
     return COMMAND_MODEL_NAME
 
 
 def dictation_model_name(language: str | None = None) -> str:
     if language == "en":
         return DICTATE_MODEL_NAME_EN
-    if language == "fi":
-        return DICTATE_MODEL_NAME_FI
     return DICTATE_MODEL_NAME
 
 
@@ -181,7 +175,6 @@ def preload_models() -> None:
     for model_name in {
         COMMAND_MODEL_NAME,
         COMMAND_MODEL_NAME_EN,
-        COMMAND_MODEL_NAME_FI,
     }:
         try:
             get_whisper_model(model_name)

@@ -34,27 +34,29 @@ For private spoken-command definitions, copy `examples/hypr/voice-commands.json`
 - `voice_hotkey/stt.py`: faster-whisper model loading, caching, transcription
 - `voice_hotkey/integrations.py`: notifications, paste injection, safe command execution
 - `voice_hotkey/config.py`: environment-driven config
-- `voice_hotkey/state_utils.py`: language/state-file helpers
+- `voice_hotkey/state_utils.py`: state-file helpers
 
 ## Features
 
 - UNIX socket daemon for low-latency repeated hotkey calls
 - press/release command and dictation flows (`command-start/stop`, `dictate-start/stop`)
 - configurable command map loaded from `~/.config/hypr/voice-commands.json` (shell-free argv execution)
-- separate command and dictation STT models with per-language overrides (`small.en`/`small` and `medium.en`/`medium` by default)
+- English-only recognition flow (no runtime language switching)
+- separate command and dictation STT models (`large-v3` command and `medium` dictation by default in current setup)
 - cached model loading and background dictation warmup
-- language toggle (`fi`/`en`) persisted under `~/.local/state/voice-hotkey-language`
 - optional whisper.cpp server backend via `VOICE_ASR_BACKEND=whispercpp_server`
 - wake-word runtime toggles (`wakeword-enable|disable|toggle|status`) with state under `~/.local/state/voice-hotkey-wakeword.json`
 - endpointed command sessions for wake starts (`wake-start`) and manual tests (`command-auto`)
+- optional always-on wakeword daemon via `--wakeword-daemon` (openWakeWord)
 
 ## Dependencies
 
 - required: `ffmpeg`
-- optional but recommended: `hyprctl`, `notify-send`, `zenity`, `pamixer`, `wtype`
+- optional but recommended: `hyprctl`, `notify-send`, `pamixer`, `wtype`
 - optional for clipboard fallback dictation: `wl-copy`
 - optional for wake greeting voice: `spd-say` or `espeak`
 - python: `faster-whisper`
+- optional python for wakeword daemon: `openwakeword`, `numpy`
 
 Example setup:
 
@@ -62,17 +64,17 @@ Example setup:
 python -m venv ~/.venvs/voice
 ~/.venvs/voice/bin/pip install -U pip
 ~/.venvs/voice/bin/pip install faster-whisper
+# optional wakeword daemon runtime
+~/.venvs/voice/bin/pip install openwakeword numpy
 ```
 
 ## Environment overrides
 
 ```bash
-export VOICE_COMMAND_MODEL=small
+export VOICE_COMMAND_MODEL=large-v3
 export VOICE_DICTATE_MODEL=medium
-export VOICE_COMMAND_MODEL_EN=small.en
-export VOICE_COMMAND_MODEL_FI=small
+export VOICE_COMMAND_MODEL_EN=large-v3
 export VOICE_DICTATE_MODEL_EN=medium.en
-export VOICE_DICTATE_MODEL_FI=medium
 export VOICE_DEVICE="cuda,cpu"
 export VOICE_COMPUTE_TYPE=float16
 export VOICE_ASR_BACKEND=faster_whisper
@@ -82,6 +84,11 @@ export VOICE_AUDIO_SOURCE=default
 export VOICE_SAMPLE_RATE_HZ=16000
 export VOICE_FRAME_MS=20
 export VOICE_SESSION_MAX_SECONDS=12
+export VOICE_WAKE_SESSION_MAX_SECONDS=8
+export VOICE_WAKE_START_SPEECH_TIMEOUT_MS=7000
+export VOICE_WAKE_VAD_RMS_THRESHOLD=80
+export VOICE_WAKE_VAD_MIN_SPEECH_MS=20
+export VOICE_WAKE_VAD_END_SILENCE_MS=300
 export VOICE_VAD_RMS_THRESHOLD=600
 export VOICE_VAD_MIN_SPEECH_MS=120
 export VOICE_VAD_END_SILENCE_MS=800
@@ -93,9 +100,27 @@ export VOICE_LOG_COMMAND_OUTPUT_MAX=300
 export VOICE_STATE_MAX_AGE_SECONDS=900
 export VOICE_WAKEWORD_ENABLED=false
 export VOICE_WAKEWORD_MODEL_PATH="$HOME/.config/hypr-voice-controls/wakeword/"
+export VOICE_WAKEWORD_MODEL_FILE=""
+export VOICE_WAKEWORD_THRESHOLD=0.72
+export VOICE_WAKEWORD_MIN_CONSECUTIVE=3
+export VOICE_WAKEWORD_COOLDOWN_MS=3000
+export VOICE_WAKEWORD_NO_SPEECH_REARM_MS=5000
+export VOICE_WAKEWORD_FRAME_MS=80
 export VOICE_WAKE_GREETING_ENABLED=true
 export VOICE_WAKE_GREETING_TEXT="hello"
 ```
+
+## Wakeword daemon (optional)
+
+Run always-on wake detection (custom model files in `~/.config/hypr-voice-controls/wakeword/`):
+
+```bash
+/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --wakeword-daemon
+```
+
+Systemd template:
+
+- `examples/systemd/wakeword.service`
 
 ## Private spoken commands (Hypr config)
 

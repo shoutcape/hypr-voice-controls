@@ -31,6 +31,11 @@ from .config import (
     WAKEWORD_STATE_PATH,
     WAKE_GREETING_ENABLED,
     WAKE_GREETING_TEXT,
+    WAKE_SESSION_MAX_SECONDS,
+    WAKE_START_SPEECH_TIMEOUT_MS,
+    WAKE_VAD_RMS_THRESHOLD,
+    WAKE_VAD_MIN_SPEECH_MS,
+    WAKE_VAD_END_SILENCE_MS,
     VENV_PYTHON,
     DICTATION_INJECTOR,
 )
@@ -38,7 +43,7 @@ from .integrations import inject_text_into_focused_input, notify, run_command
 from .logging_utils import LOGGER
 from .overlay import show_partial
 from .orchestrator import run_endpointed_command_session
-from .state_utils import get_saved_dictation_language, toggle_saved_dictation_language, write_private_text
+from .state_utils import get_saved_dictation_language, write_private_text
 from .stt import dictation_model_name, is_model_loaded, preload_models, transcribe, warm_model
 
 
@@ -48,7 +53,6 @@ ALLOWED_INPUT_MODES = {
     "dictate",
     "dictate-start",
     "dictate-stop",
-    "dictate-language",
     "command-start",
     "command-stop",
     "command-auto",
@@ -67,11 +71,25 @@ WAKEWORD_INPUT_MODES = {
     "wakeword-status",
 }
 
+WAKE_PREFIXES = (
+    "hey hyper",
+    "hey hypr",
+)
+
 
 def _sanitize_transcript(value: str) -> str:
     if LOG_TRANSCRIPTS:
         return repr(value)
     return f"<redacted len={len(value)}>"
+
+
+def _strip_wake_prefix(text: str) -> str:
+    trimmed = text.strip()
+    for prefix in WAKE_PREFIXES:
+        if trimmed.startswith(prefix):
+            remainder = trimmed[len(prefix) :].lstrip(" ,.:;!?-")
+            return remainder
+    return trimmed
 
 
 def _is_state_stale(started_at: float | int | None) -> bool:
@@ -173,7 +191,7 @@ def validate_environment() -> bool:
         notify("Voice", f"Missing required tools: {', '.join(missing_required)}")
         return False
 
-    optional_tools = ["hyprctl", "wl-copy", "notify-send", "zenity"]
+    optional_tools = ["hyprctl", "wl-copy", "notify-send"]
     if DICTATION_INJECTOR == "wtype":
         optional_tools.append("wtype")
     missing_optional = [tool for tool in optional_tools if not shutil.which(tool)]
@@ -185,44 +203,6 @@ def validate_environment() -> bool:
         notify("Voice", "wtype missing: using clipboard fallback")
 
     return True
-
-
-def choose_dictation_language() -> str | None:
-    if not shutil.which("zenity"):
-        LOGGER.error("Text input failed: zenity not found")
-        notify("Voice", "Text input unavailable: zenity missing")
-        return None
-
-    try:
-        proc = subprocess.run(
-            [
-                "zenity",
-                "--question",
-                "--title=Voice Command",
-                "--text=Choose dictation language for voice input:",
-                "--ok-label=Finnish",
-                "--extra-button=English",
-                "--cancel-label=Cancel",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except Exception as exc:
-        LOGGER.error("Dictation language selection failed: %s", exc)
-        notify("Voice", "Language picker failed")
-        return None
-
-    selected = proc.stdout.strip().lower()
-    if selected == "english":
-        return "en"
-
-    if proc.returncode != 0:
-        LOGGER.info("Dictation language selection canceled rc=%s stdout=%r", proc.returncode, proc.stdout.strip())
-        return None
-
-    return "fi"
 
 
 def start_press_hold_dictation() -> int:
@@ -460,10 +440,7 @@ def stop_press_hold_command() -> int:
 
 
 def run_dictation() -> int:
-    selected_language = choose_dictation_language()
-    if selected_language is None:
-        LOGGER.info("Voice hotkey end status=dictation_language_canceled source=dictate")
-        return 0
+    selected_language = "en"
 
     with tempfile.TemporaryDirectory(prefix="voice-dictate-") as tmpdir:
         audio_path = Path(tmpdir) / "capture.wav"
@@ -508,6 +485,8 @@ def run_dictation() -> int:
 
 def handle_command_text(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
     clean = normalize(raw_text)
+    if source == "wake_start":
+        clean = _strip_wake_prefix(clean)
     show_partial(clean)
     probability = language_probability if language_probability is not None else 0.0
     LOGGER.info(
@@ -561,6 +540,7 @@ def parse_args() -> argparse.Namespace:
         default="voice",
     )
     parser.add_argument("--daemon", action="store_true")
+    parser.add_argument("--wakeword-daemon", action="store_true")
     return parser.parse_args()
 
 
@@ -568,13 +548,6 @@ def handle_input(input_mode: str) -> int:
     if input_mode not in ALLOWED_INPUT_MODES:
         LOGGER.warning("Rejected unsupported input mode: %r", input_mode)
         return 2
-
-    if input_mode == "dictate-language":
-        selected = toggle_saved_dictation_language()
-        label = "English" if selected == "en" else "Finnish"
-        notify("Voice", f"Dictation language: {label}")
-        LOGGER.info("Voice hotkey end status=ok source=dictate_language toggled=%s", selected)
-        return 0
 
     if input_mode == "wakeword-enable":
         _set_wakeword_enabled(True)
@@ -605,11 +578,25 @@ def handle_input(input_mode: str) -> int:
         if not _read_wakeword_enabled():
             LOGGER.info("Voice hotkey end status=wake_ignored source=wake_start enabled=false")
             return 0
+        LOGGER.info(
+            "Wake start triggered session_max=%s start_timeout_ms=%s vad_threshold=%s vad_min_speech_ms=%s vad_end_silence_ms=%s",
+            WAKE_SESSION_MAX_SECONDS,
+            WAKE_START_SPEECH_TIMEOUT_MS,
+            WAKE_VAD_RMS_THRESHOLD,
+            WAKE_VAD_MIN_SPEECH_MS,
+            WAKE_VAD_END_SILENCE_MS,
+        )
         _say_wake_greeting()
         return run_endpointed_command_session(
             language=get_saved_dictation_language(),
             source="wake_start",
             command_handler=handle_command_text,
+            max_seconds=WAKE_SESSION_MAX_SECONDS,
+            start_speech_timeout_ms=WAKE_START_SPEECH_TIMEOUT_MS,
+            vad_rms_threshold=WAKE_VAD_RMS_THRESHOLD,
+            vad_min_speech_ms=WAKE_VAD_MIN_SPEECH_MS,
+            vad_end_silence_ms=WAKE_VAD_END_SILENCE_MS,
+            prompt_text="Wake heard, speak command...",
         )
 
     if input_mode == "command-auto":
@@ -768,6 +755,11 @@ def run_daemon() -> int:
 
 def main(entry_script: Path | None = None) -> int:
     args = parse_args()
+
+    if args.wakeword_daemon:
+        from .wakeword import run_wakeword_daemon
+
+        return run_wakeword_daemon()
 
     if args.daemon:
         return run_daemon()

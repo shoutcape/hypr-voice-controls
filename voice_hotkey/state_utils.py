@@ -19,13 +19,13 @@ def write_private_text(path: Path, content: str) -> None:
 def get_saved_dictation_language() -> str:
     try:
         value = LANGUAGE_PATH.read_text(encoding="utf-8").strip().lower()
-        if value in {"fi", "en"}:
+        if value == "en":
             return value
     except FileNotFoundError:
         pass
     except Exception as exc:
         LOGGER.warning("Could not read language file: %s", exc)
-    return "fi"
+    return "en"
 
 
 def set_saved_dictation_language(language: str) -> None:
@@ -33,7 +33,5 @@ def set_saved_dictation_language(language: str) -> None:
 
 
 def toggle_saved_dictation_language() -> str:
-    current = get_saved_dictation_language()
-    toggled = "en" if current == "fi" else "fi"
-    set_saved_dictation_language(toggled)
-    return toggled
+    set_saved_dictation_language("en")
+    return "en"

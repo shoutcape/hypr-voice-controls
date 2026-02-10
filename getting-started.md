@@ -15,7 +15,6 @@ On Arch/Omarchy:
 
 ```bash
 sudo pacman -S --needed ffmpeg pamixer libnotify wl-clipboard
-sudo pacman -S --needed zenity
 ```
 
 Python environment:
@@ -24,6 +23,8 @@ Python environment:
 python -m venv ~/.venvs/voice
 ~/.venvs/voice/bin/pip install -U pip
 ~/.venvs/voice/bin/pip install faster-whisper
+# optional always-on wakeword daemon
+~/.venvs/voice/bin/pip install openwakeword numpy
 ```
 
 ## 2) Verify repository path
@@ -38,6 +39,7 @@ Template files are available under:
 
 - `examples/hypr/voice-hotkey.bindings.conf`
 - `examples/systemd/voice-hotkey.service`
+- `examples/systemd/wakeword.service` (optional)
 - `examples/hypr/voice-hotkey.autostart.conf`
 - `examples/hypr/voice-commands.json`
 
@@ -95,10 +97,8 @@ Restart=on-failure
 RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
-Environment=VOICE_COMMAND_MODEL_EN=small.en
-Environment=VOICE_COMMAND_MODEL_FI=small
+Environment=VOICE_COMMAND_MODEL_EN=large-v3
 Environment=VOICE_DICTATE_MODEL_EN=medium.en
-Environment=VOICE_DICTATE_MODEL_FI=medium
 
 [Install]
 WantedBy=default.target
@@ -151,6 +151,12 @@ Check logs:
 rg "Voice hotkey end status|Input source|Dictation hold|Paste attempt" ~/.local/state/voice-hotkey.log
 ```
 
+Optional wake daemon smoke test (requires model file under `~/.config/hypr-voice-controls/wakeword/`):
+
+```bash
+/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --wakeword-daemon
+```
+
 ## 6) Supported command actions
 
 The command path uses your JSON command map (`~/.config/hypr/voice-commands.json`).
@@ -175,12 +181,10 @@ Optional private overrides:
 You can tune behavior via env vars in the service file:
 
 ```ini
-Environment=VOICE_COMMAND_MODEL=small
+Environment=VOICE_COMMAND_MODEL=large-v3
 Environment=VOICE_DICTATE_MODEL=medium
-Environment=VOICE_COMMAND_MODEL_EN=small.en
-Environment=VOICE_COMMAND_MODEL_FI=small
+Environment=VOICE_COMMAND_MODEL_EN=large-v3
 Environment=VOICE_DICTATE_MODEL_EN=medium.en
-Environment=VOICE_DICTATE_MODEL_FI=medium
 Environment=VOICE_DEVICE=cuda,cpu
 Environment=VOICE_COMPUTE_TYPE=float16
 Environment=VOICE_DAEMON_START_DELAY=0.05
