@@ -1,8 +1,10 @@
+import json
 import os
 import tempfile
+import time
 from pathlib import Path
 
-from .config import LANGUAGE_PATH
+from .config import LANGUAGE_PATH, WAKEWORD_ENABLED_DEFAULT, WAKEWORD_STATE_PATH
 from .logging_utils import LOGGER
 
 
@@ -39,3 +41,47 @@ def get_saved_dictation_language() -> str:
     except Exception as exc:
         LOGGER.warning("Could not read language file: %s", exc)
     return "en"
+
+
+def read_wakeword_enabled(default: bool = WAKEWORD_ENABLED_DEFAULT) -> bool:
+    try:
+        payload = json.loads(WAKEWORD_STATE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return default
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        LOGGER.warning("Could not read wakeword state: %s", exc)
+        return default
+
+    enabled = payload.get("enabled")
+    if isinstance(enabled, bool):
+        return enabled
+    return default
+
+
+def read_wakeword_enabled_cached(
+    cached_enabled: bool | None,
+    cached_mtime_ns: int | None,
+    default: bool = WAKEWORD_ENABLED_DEFAULT,
+) -> tuple[bool, int | None]:
+    try:
+        stat = WAKEWORD_STATE_PATH.stat()
+    except FileNotFoundError:
+        return default, None
+    except OSError as exc:
+        LOGGER.warning("Could not stat wakeword state: %s", exc)
+        if cached_enabled is not None:
+            return cached_enabled, cached_mtime_ns
+        return default, cached_mtime_ns
+
+    mtime_ns = stat.st_mtime_ns
+    if cached_enabled is not None and cached_mtime_ns == mtime_ns:
+        return cached_enabled, cached_mtime_ns
+    return read_wakeword_enabled(default=default), mtime_ns
+
+
+def set_wakeword_enabled(enabled: bool) -> None:
+    state = {
+        "enabled": enabled,
+        "updated_at": time.time(),
+    }
+    write_private_text(WAKEWORD_STATE_PATH, json.dumps(state))

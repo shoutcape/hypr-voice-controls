@@ -1,22 +1,20 @@
-import json
 import time
 from collections import deque
 
 from .audio_stream import FFmpegPCMStream
 from .config import (
     WAKEWORD_COOLDOWN_MS,
-    WAKEWORD_ENABLED_DEFAULT,
     WAKEWORD_FRAME_MS,
     WAKEWORD_MODEL_DIR,
     WAKEWORD_MODEL_FILE,
     WAKEWORD_MIN_CONSECUTIVE,
     WAKEWORD_NO_SPEECH_REARM_MS,
     WAKEWORD_PREROLL_MS,
-    WAKEWORD_STATE_PATH,
     WAKEWORD_THRESHOLD,
     WAKE_PREROLL_PCM_PATH,
 )
 from .logging_utils import LOGGER
+from .state_utils import read_wakeword_enabled_cached
 
 
 _WAKEWORD_ENABLED_CACHE: bool | None = None
@@ -43,34 +41,13 @@ def _resolve_model_paths() -> list[str]:
 def _wakeword_enabled() -> bool:
     global _WAKEWORD_ENABLED_CACHE, _WAKEWORD_ENABLED_MTIME_NS
 
-    try:
-        stat = WAKEWORD_STATE_PATH.stat()
-    except FileNotFoundError:
-        _WAKEWORD_ENABLED_CACHE = WAKEWORD_ENABLED_DEFAULT
-        _WAKEWORD_ENABLED_MTIME_NS = None
-        return WAKEWORD_ENABLED_DEFAULT
-    except Exception as exc:
-        LOGGER.warning("Could not stat wakeword state in daemon: %s", exc)
-        if _WAKEWORD_ENABLED_CACHE is not None:
-            return _WAKEWORD_ENABLED_CACHE
-        return WAKEWORD_ENABLED_DEFAULT
-
-    if _WAKEWORD_ENABLED_MTIME_NS == stat.st_mtime_ns and _WAKEWORD_ENABLED_CACHE is not None:
-        return _WAKEWORD_ENABLED_CACHE
-
-    try:
-        payload = json.loads(WAKEWORD_STATE_PATH.read_text(encoding="utf-8"))
-        enabled = payload.get("enabled")
-        if isinstance(enabled, bool):
-            _WAKEWORD_ENABLED_CACHE = enabled
-            _WAKEWORD_ENABLED_MTIME_NS = stat.st_mtime_ns
-            return enabled
-    except Exception as exc:
-        LOGGER.warning("Could not read wakeword state in daemon: %s", exc)
-
-    _WAKEWORD_ENABLED_CACHE = WAKEWORD_ENABLED_DEFAULT
-    _WAKEWORD_ENABLED_MTIME_NS = stat.st_mtime_ns
-    return WAKEWORD_ENABLED_DEFAULT
+    enabled, mtime_ns = read_wakeword_enabled_cached(
+        _WAKEWORD_ENABLED_CACHE,
+        _WAKEWORD_ENABLED_MTIME_NS,
+    )
+    _WAKEWORD_ENABLED_CACHE = enabled
+    _WAKEWORD_ENABLED_MTIME_NS = mtime_ns
+    return enabled
 
 
 def run_wakeword_daemon() -> int:

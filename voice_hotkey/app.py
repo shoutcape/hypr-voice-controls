@@ -29,8 +29,6 @@ from .config import (
     LOG_TRANSCRIPTS,
     SOCKET_PATH,
     STATE_MAX_AGE_SECONDS,
-    WAKEWORD_ENABLED_DEFAULT,
-    WAKEWORD_STATE_PATH,
     WAKE_GREETING_ENABLED,
     WAKE_GREETING_TEXT,
     WAKE_DICTATE_SESSION_MAX_SECONDS,
@@ -52,7 +50,12 @@ from .integrations import (
 from .logging_utils import LOGGER
 from .overlay import show_partial
 from .orchestrator import run_endpointed_command_session
-from .state_utils import get_saved_dictation_language, write_private_text
+from .state_utils import (
+    get_saved_dictation_language,
+    read_wakeword_enabled,
+    set_wakeword_enabled,
+    write_private_text,
+)
 from .stt import dictation_model_name, is_model_loaded, preload_models, transcribe, warm_model
 
 
@@ -158,24 +161,11 @@ def _recv_json_line(sock: socket.socket) -> dict:
 
 
 def _read_wakeword_enabled() -> bool:
-    try:
-        payload = json.loads(WAKEWORD_STATE_PATH.read_text(encoding="utf-8"))
-        enabled = payload.get("enabled")
-        if isinstance(enabled, bool):
-            return enabled
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        LOGGER.warning("Could not read wakeword state: %s", exc)
-    return WAKEWORD_ENABLED_DEFAULT
+    return read_wakeword_enabled()
 
 
 def _set_wakeword_enabled(enabled: bool) -> None:
-    state = {
-        "enabled": enabled,
-        "updated_at": time.time(),
-    }
-    write_private_text(WAKEWORD_STATE_PATH, json.dumps(state))
+    set_wakeword_enabled(enabled)
 
 
 def _say_wake_greeting() -> None:
