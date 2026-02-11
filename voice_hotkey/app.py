@@ -897,19 +897,24 @@ def run_daemon() -> int:
                     try:
                         conn.settimeout(DAEMON_CONNECT_TIMEOUT)
                         request = _recv_json_line(conn)
+                    except (socket.timeout, UnicodeDecodeError, json.JSONDecodeError, ValueError, OSError) as exc:
+                        LOGGER.warning("Voice daemon request parse failed: %s", exc)
+                        rc = 1
+                    else:
                         input_mode = request.get("input", "voice")
                         if input_mode not in ALLOWED_INPUT_MODES:
                             LOGGER.warning("Rejected invalid daemon input=%r", input_mode)
                             rc = 2
                         else:
-                            rc = handle_input(input_mode)
-                    except Exception as exc:
-                        LOGGER.exception("Voice daemon request failed: %s", exc)
-                        rc = 1
+                            try:
+                                rc = handle_input(input_mode)
+                            except Exception as exc:
+                                LOGGER.exception("Voice daemon request handler failed input=%s: %s", input_mode, exc)
+                                rc = 1
 
                     try:
                         conn.sendall((json.dumps({"rc": rc}) + "\n").encode("utf-8"))
-                    except Exception:
+                    except OSError:
                         pass
     finally:
         lock_handle.close()
