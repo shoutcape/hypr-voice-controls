@@ -247,6 +247,65 @@ def _wait_for_captured_audio(audio_path: Path, timeout_seconds: float = 2.0) -> 
         time.sleep(0.05)
 
 
+def _load_press_hold_state(state_path: Path, state_label: str) -> dict | None:
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        LOGGER.error("Failed to parse %s state: %s", state_label, exc)
+        state_path.unlink(missing_ok=True)
+        return None
+
+
+def _stop_press_hold_recorder(
+    *,
+    pid: int,
+    started_at: float | int | None,
+    stale_label: str,
+    stop_label: str,
+    required_substrings: list[str],
+) -> None:
+    if pid <= 0:
+        return
+
+    if _is_state_stale(started_at):
+        LOGGER.warning(
+            "Skipping stale %s recorder stop pid=%s started_at=%s max_age=%ss",
+            stale_label,
+            pid,
+            started_at,
+            STATE_MAX_AGE_SECONDS,
+        )
+        return
+
+    stop_recording_pid(pid, stop_label, required_substrings=required_substrings)
+
+
+def _process_press_hold_transcription(
+    *,
+    audio_path: Path,
+    language: str,
+    no_speech_source: str,
+    transcribe_mode: str,
+    transcribe_failure_label: str,
+    transcribe_failure_source: str,
+    on_transcription: Callable[[str, str | None, float | None, str], int],
+) -> int:
+    if not audio_path.exists() or audio_path.stat().st_size == 0:
+        notify("Voice", "No speech captured")
+        LOGGER.info("Voice hotkey end status=no_speech source=%s", no_speech_source)
+        return 0
+
+    try:
+        text, detected_language, language_probability = transcribe(audio_path, language=language, mode=transcribe_mode)
+    except Exception as exc:
+        notify("Voice", f"Transcription failed: {type(exc).__name__}")
+        LOGGER.exception("%s transcription failed: %s", transcribe_failure_label, exc)
+        LOGGER.info("Voice hotkey end status=transcription_failed source=%s", transcribe_failure_source)
+        return 1
+
+    return on_transcription(text, detected_language, language_probability, language)
+
+
 def _start_press_hold_session(
     *,
     state_path: Path,
@@ -312,11 +371,8 @@ def _stop_press_hold_session(
         notify("Voice", no_active_notify)
         return 0
 
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        LOGGER.error("Failed to parse %s state: %s", state_label, exc)
-        state_path.unlink(missing_ok=True)
+    state = _load_press_hold_state(state_path, state_label)
+    if state is None:
         return 1
 
     pid = int(state.get("pid", 0))
@@ -328,35 +384,26 @@ def _stop_press_hold_session(
 
     notify("Voice", processing_notify)
 
-    if pid > 0:
-        if _is_state_stale(started_at):
-            LOGGER.warning(
-                "Skipping stale %s recorder stop pid=%s started_at=%s max_age=%ss",
-                stale_label,
-                pid,
-                started_at,
-                STATE_MAX_AGE_SECONDS,
-            )
-        else:
-            stop_recording_pid(pid, stop_label, required_substrings=required_substrings)
+    _stop_press_hold_recorder(
+        pid=pid,
+        started_at=started_at,
+        stale_label=stale_label,
+        stop_label=stop_label,
+        required_substrings=required_substrings,
+    )
 
     _wait_for_captured_audio(audio_path)
 
     try:
-        if not audio_path.exists() or audio_path.stat().st_size == 0:
-            notify("Voice", "No speech captured")
-            LOGGER.info("Voice hotkey end status=no_speech source=%s", no_speech_source)
-            return 0
-
-        try:
-            text, detected_language, language_probability = transcribe(audio_path, language=language, mode=transcribe_mode)
-        except Exception as exc:
-            notify("Voice", f"Transcription failed: {type(exc).__name__}")
-            LOGGER.exception("%s transcription failed: %s", transcribe_failure_label, exc)
-            LOGGER.info("Voice hotkey end status=transcription_failed source=%s", transcribe_failure_source)
-            return 1
-
-        return on_transcription(text, detected_language, language_probability, language)
+        return _process_press_hold_transcription(
+            audio_path=audio_path,
+            language=language,
+            no_speech_source=no_speech_source,
+            transcribe_mode=transcribe_mode,
+            transcribe_failure_label=transcribe_failure_label,
+            transcribe_failure_source=transcribe_failure_source,
+            on_transcription=on_transcription,
+        )
     finally:
         state_path.unlink(missing_ok=True)
         if tmpdir.exists():
@@ -521,6 +568,110 @@ def _parse_wake_intent(raw_text: str) -> tuple[str | None, str]:
     return None, ""
 
 
+def _handle_wake_inline_intent(
+    intent: str | None,
+    remainder: str,
+    *,
+    language: str | None,
+    language_probability: float | None,
+) -> int | None:
+    if intent == "command" and remainder:
+        LOGGER.info("Wake intent command with inline payload; skipping follow-up capture")
+        return handle_command_text(
+            remainder,
+            source="wake_command_inline",
+            language=language,
+            language_probability=language_probability,
+        )
+
+    if intent == "dictate" and remainder:
+        LOGGER.info("Wake intent dictation with inline payload; skipping follow-up capture")
+        return handle_dictation_text(
+            remainder,
+            source="wake_dictate_inline",
+            language=language,
+            language_probability=language_probability,
+        )
+
+    return None
+
+
+def _handle_wake_implicit_intent(
+    raw_text: str,
+    *,
+    language: str | None,
+    language_probability: float | None,
+) -> int:
+    spoken_after_prefix = _strip_wake_prefix(raw_text, preserve_case=True)
+    normalized_after_prefix = normalize(spoken_after_prefix)
+    word_count = len(normalized_after_prefix.split()) if normalized_after_prefix else 0
+    if word_count >= WAKE_AUTO_DICTATION_MIN_WORDS:
+        LOGGER.info(
+            "Wake implicit dictation by length words=%s threshold=%s",
+            word_count,
+            WAKE_AUTO_DICTATION_MIN_WORDS,
+        )
+        return handle_dictation_text(
+            spoken_after_prefix,
+            source="wake_dictate_implicit",
+            language=language,
+            language_probability=language_probability,
+        )
+
+    LOGGER.info(
+        "Wake implicit command by length words=%s threshold=%s",
+        word_count,
+        WAKE_AUTO_DICTATION_MIN_WORDS,
+    )
+    return handle_command_text(
+        spoken_after_prefix,
+        source="wake_start",
+        language=language,
+        language_probability=language_probability,
+    )
+
+
+def _handle_wake_intent(
+    raw_text: str,
+    *,
+    language: str | None,
+    language_probability: float | None,
+    wake_language: str,
+) -> int:
+    clean = normalize(raw_text)
+    clean = _strip_wake_prefix(clean)
+    intent, remainder = _parse_wake_intent(raw_text)
+    probability = language_probability if language_probability is not None else 0.0
+    LOGGER.info(
+        "Wake intent language=%s probability=%.3f raw=%s normalized=%s intent=%s remainder=%s",
+        language,
+        probability,
+        _sanitize_transcript(raw_text),
+        _sanitize_transcript(clean),
+        intent,
+        _sanitize_transcript(remainder),
+    )
+
+    inline_result = _handle_wake_inline_intent(
+        intent,
+        remainder,
+        language=language,
+        language_probability=language_probability,
+    )
+    if inline_result is not None:
+        return inline_result
+
+    if not intent:
+        return _handle_wake_implicit_intent(
+            raw_text,
+            language=language,
+            language_probability=language_probability,
+        )
+
+    selected_language = language or wake_language
+    return run_wake_followup_session(intent, selected_language)
+
+
 def handle_dictation_text(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
     spoken = raw_text.strip()
     probability = language_probability if language_probability is not None else 0.0
@@ -626,11 +777,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def handle_input(input_mode: str) -> int:
-    if input_mode not in ALLOWED_INPUT_MODES:
-        LOGGER.warning("Rejected unsupported input mode: %r", input_mode)
-        return 2
-
+def _handle_wakeword_toggle_input(input_mode: str) -> int | None:
     if input_mode == "wakeword-enable":
         _set_wakeword_enabled(True)
         notify("Voice", "Wake word enabled")
@@ -656,124 +803,61 @@ def handle_input(input_mode: str) -> int:
         LOGGER.info("Voice hotkey end status=ok source=wakeword_status enabled=%s", enabled)
         return 0
 
-    if input_mode == "wake-start":
-        if not _read_wakeword_enabled():
-            LOGGER.info("Voice hotkey end status=wake_ignored source=wake_start enabled=false")
-            return 0
-        LOGGER.info(
-            "Wake start triggered session_max=%s start_timeout_ms=%s vad_threshold=%s vad_min_speech_ms=%s vad_end_silence_ms=%s intent_end_silence_ms=%s dictate_end_silence_ms=%s",
-            WAKE_SESSION_MAX_SECONDS,
-            WAKE_START_SPEECH_TIMEOUT_MS,
-            WAKE_VAD_RMS_THRESHOLD,
-            WAKE_VAD_MIN_SPEECH_MS,
-            WAKE_VAD_END_SILENCE_MS,
-            WAKE_INTENT_VAD_END_SILENCE_MS,
-            WAKE_DICTATE_VAD_END_SILENCE_MS,
-        )
-        _say_wake_greeting()
-        wake_language = get_saved_dictation_language()
+    return None
 
-        def _wake_intent_handler(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
-            clean = normalize(raw_text)
-            clean = _strip_wake_prefix(clean)
-            intent, remainder = _parse_wake_intent(raw_text)
-            probability = language_probability if language_probability is not None else 0.0
-            LOGGER.info(
-                "Wake intent language=%s probability=%.3f raw=%s normalized=%s intent=%s remainder=%s",
-                language,
-                probability,
-                _sanitize_transcript(raw_text),
-                _sanitize_transcript(clean),
-                intent,
-                _sanitize_transcript(remainder),
-            )
 
-            if intent == "command" and remainder:
-                LOGGER.info("Wake intent command with inline payload; skipping follow-up capture")
-                return handle_command_text(
-                    remainder,
-                    source="wake_command_inline",
-                    language=language,
-                    language_probability=language_probability,
-                )
+def _run_wake_start() -> int:
+    if not _read_wakeword_enabled():
+        LOGGER.info("Voice hotkey end status=wake_ignored source=wake_start enabled=false")
+        return 0
 
-            if intent == "dictate" and remainder:
-                LOGGER.info("Wake intent dictation with inline payload; skipping follow-up capture")
-                return handle_dictation_text(
-                    remainder,
-                    source="wake_dictate_inline",
-                    language=language,
-                    language_probability=language_probability,
-                )
+    LOGGER.info(
+        "Wake start triggered session_max=%s start_timeout_ms=%s vad_threshold=%s vad_min_speech_ms=%s vad_end_silence_ms=%s intent_end_silence_ms=%s dictate_end_silence_ms=%s",
+        WAKE_SESSION_MAX_SECONDS,
+        WAKE_START_SPEECH_TIMEOUT_MS,
+        WAKE_VAD_RMS_THRESHOLD,
+        WAKE_VAD_MIN_SPEECH_MS,
+        WAKE_VAD_END_SILENCE_MS,
+        WAKE_INTENT_VAD_END_SILENCE_MS,
+        WAKE_DICTATE_VAD_END_SILENCE_MS,
+    )
+    _say_wake_greeting()
+    wake_language = get_saved_dictation_language()
 
-            if not intent:
-                spoken_after_prefix = _strip_wake_prefix(raw_text, preserve_case=True)
-                normalized_after_prefix = normalize(spoken_after_prefix)
-                word_count = len(normalized_after_prefix.split()) if normalized_after_prefix else 0
-                if word_count >= WAKE_AUTO_DICTATION_MIN_WORDS:
-                    LOGGER.info(
-                        "Wake implicit dictation by length words=%s threshold=%s",
-                        word_count,
-                        WAKE_AUTO_DICTATION_MIN_WORDS,
-                    )
-                    return handle_dictation_text(
-                        spoken_after_prefix,
-                        source="wake_dictate_implicit",
-                        language=language,
-                        language_probability=language_probability,
-                    )
-
-                LOGGER.info(
-                    "Wake implicit command by length words=%s threshold=%s",
-                    word_count,
-                    WAKE_AUTO_DICTATION_MIN_WORDS,
-                )
-                return handle_command_text(
-                    spoken_after_prefix,
-                    source="wake_start",
-                    language=language,
-                    language_probability=language_probability,
-                )
-
-            selected_language = language or wake_language
-            return run_wake_followup_session(intent, selected_language)
-
-        return run_endpointed_command_session(
-            language=wake_language,
-            source="wake_start",
-            command_handler=_wake_intent_handler,
-            max_seconds=WAKE_SESSION_MAX_SECONDS,
-            start_speech_timeout_ms=WAKE_START_SPEECH_TIMEOUT_MS,
-            vad_rms_threshold=WAKE_VAD_RMS_THRESHOLD,
-            vad_min_speech_ms=WAKE_VAD_MIN_SPEECH_MS,
-            vad_end_silence_ms=WAKE_INTENT_VAD_END_SILENCE_MS,
-            prompt_text="Wake heard, say command or dictate...",
+    def _wake_intent_handler(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
+        return _handle_wake_intent(
+            raw_text,
+            language=language,
+            language_probability=language_probability,
+            wake_language=wake_language,
         )
 
-    if input_mode == "command-auto":
-        return run_endpointed_command_session(
-            language=get_saved_dictation_language(),
-            source="command_auto",
-            command_handler=handle_command_text,
-        )
+    return run_endpointed_command_session(
+        language=wake_language,
+        source="wake_start",
+        command_handler=_wake_intent_handler,
+        max_seconds=WAKE_SESSION_MAX_SECONDS,
+        start_speech_timeout_ms=WAKE_START_SPEECH_TIMEOUT_MS,
+        vad_rms_threshold=WAKE_VAD_RMS_THRESHOLD,
+        vad_min_speech_ms=WAKE_VAD_MIN_SPEECH_MS,
+        vad_end_silence_ms=WAKE_INTENT_VAD_END_SILENCE_MS,
+        prompt_text="Wake heard, say command or dictate...",
+    )
 
+
+def _handle_hold_input(input_mode: str) -> int | None:
     if input_mode == "dictate-start":
         return start_press_hold_dictation()
-
     if input_mode == "dictate-stop":
         return stop_press_hold_dictation()
-
     if input_mode == "command-start":
         return start_press_hold_command()
-
     if input_mode == "command-stop":
         return stop_press_hold_command()
+    return None
 
-    LOGGER.info("Voice hotkey trigger start input=%s", input_mode)
 
-    if input_mode in {"text", "dictate"}:
-        return run_dictation()
-
+def _run_voice_command_capture() -> int:
     with tempfile.TemporaryDirectory(prefix="voice-hotkey-") as tmpdir:
         audio_path = Path(tmpdir) / "capture.wav"
         language = get_saved_dictation_language()
@@ -798,6 +882,37 @@ def handle_input(input_mode: str) -> int:
             language=detected_language,
             language_probability=language_probability,
         )
+
+
+def handle_input(input_mode: str) -> int:
+    if input_mode not in ALLOWED_INPUT_MODES:
+        LOGGER.warning("Rejected unsupported input mode: %r", input_mode)
+        return 2
+
+    wakeword_result = _handle_wakeword_toggle_input(input_mode)
+    if wakeword_result is not None:
+        return wakeword_result
+
+    if input_mode == "wake-start":
+        return _run_wake_start()
+
+    if input_mode == "command-auto":
+        return run_endpointed_command_session(
+            language=get_saved_dictation_language(),
+            source="command_auto",
+            command_handler=handle_command_text,
+        )
+
+    hold_result = _handle_hold_input(input_mode)
+    if hold_result is not None:
+        return hold_result
+
+    LOGGER.info("Voice hotkey trigger start input=%s", input_mode)
+
+    if input_mode in {"text", "dictate"}:
+        return run_dictation()
+
+    return _run_voice_command_capture()
 
 
 def start_daemon(entry_script: Path | None = None) -> None:
@@ -849,6 +964,46 @@ def request_daemon(input_mode: str, *, auto_start: bool = True, entry_script: Pa
     return 1
 
 
+def _parse_daemon_request(conn: socket.socket) -> dict | None:
+    try:
+        conn.settimeout(DAEMON_CONNECT_TIMEOUT)
+        return _recv_json_line(conn)
+    except (socket.timeout, UnicodeDecodeError, json.JSONDecodeError, ValueError, OSError) as exc:
+        LOGGER.warning("Voice daemon request parse failed: %s", exc)
+        return None
+
+
+def _execute_daemon_request(request: dict) -> int:
+    input_mode = request.get("input", "voice")
+    if input_mode not in ALLOWED_INPUT_MODES:
+        LOGGER.warning("Rejected invalid daemon input=%r", input_mode)
+        return 2
+
+    try:
+        return handle_input(input_mode)
+    except Exception as exc:
+        LOGGER.exception("Voice daemon request handler failed input=%s: %s", input_mode, exc)
+        return 1
+
+
+def _send_daemon_response(conn: socket.socket, rc: int) -> None:
+    try:
+        conn.sendall((json.dumps({"rc": rc}) + "\n").encode("utf-8"))
+    except OSError:
+        pass
+
+
+def _handle_daemon_connection(conn: socket.socket) -> None:
+    with conn:
+        request = _parse_daemon_request(conn)
+        if request is None:
+            _send_daemon_response(conn, 1)
+            return
+
+        rc = _execute_daemon_request(request)
+        _send_daemon_response(conn, rc)
+
+
 def run_daemon() -> int:
     if not validate_environment():
         return 1
@@ -882,30 +1037,7 @@ def run_daemon() -> int:
 
             while True:
                 conn, _ = server.accept()
-                with conn:
-                    rc = 1
-                    try:
-                        conn.settimeout(DAEMON_CONNECT_TIMEOUT)
-                        request = _recv_json_line(conn)
-                    except (socket.timeout, UnicodeDecodeError, json.JSONDecodeError, ValueError, OSError) as exc:
-                        LOGGER.warning("Voice daemon request parse failed: %s", exc)
-                        rc = 1
-                    else:
-                        input_mode = request.get("input", "voice")
-                        if input_mode not in ALLOWED_INPUT_MODES:
-                            LOGGER.warning("Rejected invalid daemon input=%r", input_mode)
-                            rc = 2
-                        else:
-                            try:
-                                rc = handle_input(input_mode)
-                            except Exception as exc:
-                                LOGGER.exception("Voice daemon request handler failed input=%s: %s", input_mode, exc)
-                                rc = 1
-
-                    try:
-                        conn.sendall((json.dumps({"rc": rc}) + "\n").encode("utf-8"))
-                    except OSError:
-                        pass
+                _handle_daemon_connection(conn)
     finally:
         lock_handle.close()
 
