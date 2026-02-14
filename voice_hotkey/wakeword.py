@@ -1,8 +1,13 @@
 import time
 from collections import deque
+import json
 
+from .audio import pid_alive, pid_cmdline_contains
 from .audio_stream import FFmpegPCMStream
 from .config import (
+    COMMAND_STATE_PATH,
+    DICTATE_STATE_PATH,
+    STATE_MAX_AGE_SECONDS,
     WAKEWORD_COOLDOWN_MS,
     WAKEWORD_FRAME_MS,
     WAKEWORD_MODEL_DIR,
@@ -19,6 +24,7 @@ from .state_utils import read_wakeword_enabled_cached
 
 _WAKEWORD_ENABLED_CACHE: bool | None = None
 _WAKEWORD_ENABLED_MTIME_NS: int | None = None
+_LAST_ACTIVE_CAPTURE_LOG_AT = 0.0
 
 
 def _resolve_model_paths() -> list[str]:
@@ -48,6 +54,109 @@ def _wakeword_enabled() -> bool:
     _WAKEWORD_ENABLED_CACHE = enabled
     _WAKEWORD_ENABLED_MTIME_NS = mtime_ns
     return enabled
+
+
+def _state_required_substrings(state: dict) -> list[str]:
+    raw = state.get("pid_required_substrings")
+    if isinstance(raw, list):
+        tokens = [token for token in raw if isinstance(token, str) and token.strip()]
+        if tokens:
+            return tokens
+    return ["ffmpeg"]
+
+
+def _capture_state_active(state_path, now: float) -> bool:
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        LOGGER.warning("Wakeword could not read capture state path=%s err=%s", state_path, exc)
+        return False
+
+    pid = state.get("pid")
+    if not isinstance(pid, int):
+        return False
+
+    started_at = state.get("started_at")
+    if isinstance(started_at, (int, float)):
+        if (now - float(started_at)) > STATE_MAX_AGE_SECONDS:
+            return False
+
+    if not pid_alive(pid):
+        return False
+
+    required_substrings = _state_required_substrings(state)
+    if not pid_cmdline_contains(pid, required_substrings=required_substrings):
+        return False
+
+    return True
+
+
+def _manual_capture_active(now: float) -> bool:
+    return _capture_state_active(DICTATE_STATE_PATH, now) or _capture_state_active(COMMAND_STATE_PATH, now)
+
+
+def _log_active_capture_skip(now: float) -> None:
+    global _LAST_ACTIVE_CAPTURE_LOG_AT
+    if now - _LAST_ACTIVE_CAPTURE_LOG_AT < 2.0:
+        return
+    _LAST_ACTIVE_CAPTURE_LOG_AT = now
+    LOGGER.info("Wakeword trigger skipped while manual capture is active")
+
+
+def _restart_wakeword_stream(stream: FFmpegPCMStream, reason: str) -> None:
+    LOGGER.warning("Wakeword stream %s; restarting ffmpeg capture", reason)
+    stream.stop()
+    time.sleep(0.05)
+    stream.start()
+
+
+def _write_wake_preroll(ring: deque[bytes]) -> None:
+    try:
+        WAKE_PREROLL_PCM_PATH.parent.mkdir(parents=True, exist_ok=True)
+        WAKE_PREROLL_PCM_PATH.write_bytes(b"".join(ring))
+    except Exception as exc:
+        LOGGER.warning("Could not write wake preroll PCM: %s", exc)
+
+
+def _should_trigger_wake(*, now: float, last_trigger_at: float, rearm_until: float) -> bool:
+    if now < rearm_until:
+        return False
+    if (now - last_trigger_at) * 1000 < WAKEWORD_COOLDOWN_MS:
+        return False
+    if not _wakeword_enabled():
+        return False
+    return True
+
+
+def _handle_wake_trigger(
+    *,
+    stream: FFmpegPCMStream,
+    ring: deque[bytes],
+    request_daemon,
+    now: float,
+) -> tuple[int, float, float]:
+    _write_wake_preroll(ring)
+    stream.stop()
+    try:
+        rc = request_daemon("wake-start")
+    finally:
+        stream.start()
+
+    last_trigger_at = 0.0
+    rearm_until = 0.0
+    if rc == 3:
+        last_trigger_at = now
+        rearm_until = now + (WAKEWORD_NO_SPEECH_REARM_MS / 1000.0)
+        LOGGER.info(
+            "Wakeword trigger resulted in no_speech; rearming after %sms",
+            WAKEWORD_NO_SPEECH_REARM_MS,
+        )
+    elif rc == 0:
+        last_trigger_at = now
+
+    return rc, last_trigger_at, rearm_until
 
 
 def run_wakeword_daemon() -> int:
@@ -86,24 +195,18 @@ def run_wakeword_daemon() -> int:
     from .app import request_daemon
 
     with FFmpegPCMStream(sample_rate_hz=16000, frame_ms=WAKEWORD_FRAME_MS) as stream:
-        def _restart_stream(reason: str) -> None:
-            nonlocal empty_frame_streak
-            LOGGER.warning("Wakeword stream %s; restarting ffmpeg capture", reason)
-            stream.stop()
-            time.sleep(0.05)
-            stream.start()
-            empty_frame_streak = 0
-
         read_timeout_ms = max(120, WAKEWORD_FRAME_MS * 3)
         while True:
             frame = stream.read_frame_with_timeout(read_timeout_ms)
             if not frame:
                 if not stream.is_running():
-                    _restart_stream("exited")
+                    _restart_wakeword_stream(stream, "exited")
+                    empty_frame_streak = 0
                     continue
                 empty_frame_streak += 1
                 if empty_frame_streak >= empty_frame_restart_threshold:
-                    _restart_stream("stalled")
+                    _restart_wakeword_stream(stream, "stalled")
+                    empty_frame_streak = 0
                 time.sleep(0.02)
                 continue
             empty_frame_streak = 0
@@ -128,36 +231,28 @@ def run_wakeword_daemon() -> int:
                 continue
 
             now = time.time()
-            if now < rearm_until:
+            if _manual_capture_active(now):
+                streak_by_name[score_name] = 0
+                ring.clear()
+                _log_active_capture_skip(now)
                 continue
 
-            if (now - last_trigger_at) * 1000 < WAKEWORD_COOLDOWN_MS:
-                continue
-
-            if not _wakeword_enabled():
+            if not _should_trigger_wake(now=now, last_trigger_at=last_trigger_at, rearm_until=rearm_until):
                 continue
 
             LOGGER.info("Wakeword detected name=%s score=%.3f", score_name, score)
             streak_by_name[score_name] = 0
-            try:
-                WAKE_PREROLL_PCM_PATH.parent.mkdir(parents=True, exist_ok=True)
-                WAKE_PREROLL_PCM_PATH.write_bytes(b"".join(ring))
-            except Exception as exc:
-                LOGGER.warning("Could not write wake preroll PCM: %s", exc)
-            stream.stop()
-            try:
-                rc = request_daemon("wake-start")
-            finally:
-                stream.start()
+            rc, trigger_last, trigger_rearm = _handle_wake_trigger(
+                stream=stream,
+                ring=ring,
+                request_daemon=request_daemon,
+                now=now,
+            )
             if rc == 3:
-                last_trigger_at = now
-                rearm_until = now + (WAKEWORD_NO_SPEECH_REARM_MS / 1000.0)
-                LOGGER.info(
-                    "Wakeword trigger resulted in no_speech; rearming after %sms",
-                    WAKEWORD_NO_SPEECH_REARM_MS,
-                )
+                last_trigger_at = trigger_last
+                rearm_until = trigger_rearm
                 continue
             if rc != 0:
                 LOGGER.warning("Wakeword trigger request failed rc=%s", rc)
                 continue
-            last_trigger_at = now
+            last_trigger_at = trigger_last
