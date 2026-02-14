@@ -31,11 +31,9 @@ python -m venv ~/.venvs/voice
 
 ## 2) Verify repository path
 
-This guide assumes the repo is here:
+This guide uses `<REPO_DIR>` as a placeholder for your local checkout path.
 
-`/home/shoutcape/Github/hypr-voice-controls`
-
-If your path differs, update the keybind and service paths below accordingly.
+Example value: `/home/shoutcape/Github/hypr-voice-controls`
 
 Template files are available under:
 
@@ -57,15 +55,15 @@ Add:
 
 ```conf
 # Voice command: hold SUPER+V, release to execute
-bind  = SUPER, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-start
-bindr = SUPER, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-stop
+bind  = SUPER, V, exec, <REPO_DIR>/voice-hotkey.py --input command-start
+bindr = SUPER, V, exec, <REPO_DIR>/voice-hotkey.py --input command-stop
 
 # Dictation: hold SUPER+SHIFT+V, release to paste
-bind  = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-start
-bindr = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-stop
+bind  = SUPER SHIFT, V, exec, <REPO_DIR>/voice-hotkey.py --input dictate-start
+bindr = SUPER SHIFT, V, exec, <REPO_DIR>/voice-hotkey.py --input dictate-stop
 
 # Toggle wake-word listener state
-bind = SUPER, B, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input wakeword-toggle
+bind = SUPER, B, exec, <REPO_DIR>/voice-hotkey.py --input wakeword-toggle
 ```
 
 If you prefer a separate file under `~/.config/hypr/conf.d/`, make sure your `~/.config/hypr/hyprland.conf` explicitly sources it.
@@ -94,7 +92,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.venvs/voice/bin/python %h/Github/hypr-voice-controls/voice-hotkey.py --daemon
+ExecStart=%h/.venvs/voice/bin/python <REPO_DIR>/voice-hotkey.py --daemon
 Restart=on-failure
 RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse
@@ -134,17 +132,17 @@ exec-once = systemctl --user restart voice-hotkey.service
 Manual smoke test (command path):
 
 ```bash
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-start
+<REPO_DIR>/voice-hotkey.py --input command-start
 sleep 1
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-stop
+<REPO_DIR>/voice-hotkey.py --input command-stop
 ```
 
 Manual smoke test (dictation path):
 
 ```bash
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-start
+<REPO_DIR>/voice-hotkey.py --input dictate-start
 sleep 1
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-stop
+<REPO_DIR>/voice-hotkey.py --input dictate-stop
 ```
 
 Check logs:
@@ -156,8 +154,17 @@ rg "Voice hotkey end status|Input source|Dictation hold|Paste attempt" ~/.local/
 Optional wake daemon smoke test (requires model file under `~/.config/hypr-voice-controls/wakeword/`):
 
 ```bash
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --wakeword-daemon
+<REPO_DIR>/voice-hotkey.py --wakeword-daemon
 ```
+
+If you use `examples/systemd/wakeword.service` as-is, wake detection starts disabled (`VOICE_WAKEWORD_ENABLED=false`).
+Enable it at runtime with:
+
+```bash
+<REPO_DIR>/voice-hotkey.py --input wakeword-enable
+```
+
+Wakeword triggers are automatically suppressed while manual hold capture is active (`command-start`/`dictate-start`) to prevent overlap.
 
 After wake trigger, say mode intent first:
 
@@ -243,7 +250,7 @@ systemctl --user restart voice-hotkey.service
 After pulling repo changes:
 
 ```bash
-cd /home/shoutcape/Github/hypr-voice-controls
+cd <REPO_DIR>
 systemctl --user restart voice-hotkey.service
 systemctl --user status voice-hotkey.service --no-pager
 ```

@@ -2,6 +2,7 @@ import ctypes
 import os
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .asr_whispercpp import transcribe_file as transcribe_with_whisper_server
 from .config import (
@@ -13,8 +14,11 @@ from .config import (
 )
 from .logging_utils import LOGGER
 
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel as FasterWhisperModel  # type: ignore[import-not-found]
 
-WHISPER_MODELS: dict[tuple[str, str, str], object] = {}
+
+WHISPER_MODELS: dict[tuple[str, str, str], "FasterWhisperModel"] = {}
 WHISPER_MODELS_LOCK = threading.Lock()
 
 
@@ -82,8 +86,8 @@ def dictation_model_name(language: str | None = None) -> str:
     return DICTATE_MODEL_NAME
 
 
-def get_whisper_model(model_name: str):
-    from faster_whisper import WhisperModel
+def get_whisper_model(model_name: str) -> "FasterWhisperModel":
+    from faster_whisper import WhisperModel  # type: ignore[import-not-found]
 
     errors = []
     for device in DEVICE_CANDIDATES:

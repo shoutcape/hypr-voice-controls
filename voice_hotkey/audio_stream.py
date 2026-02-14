@@ -2,6 +2,7 @@ import os
 import select
 import subprocess
 import time
+from types import TracebackType
 
 from .config import AUDIO_BACKEND, AUDIO_SOURCE
 from .logging_utils import LOGGER
@@ -101,5 +102,10 @@ class FFmpegPCMStream:
         self.start()
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.stop()

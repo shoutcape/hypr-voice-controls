@@ -42,7 +42,7 @@ For private spoken-command definitions, copy `examples/hypr/voice-commands.json`
 - press/release command and dictation flows (`command-start/stop`, `dictate-start/stop`)
 - configurable command map loaded from `~/.config/hypr/voice-commands.json` (shell-free argv execution)
 - English-only recognition flow (no runtime language switching)
-- separate command and dictation STT models (`large-v3` command and `medium` dictation by default in current setup)
+- separate command and dictation STT models (`large-v3-turbo` for both by default)
 - cached model loading and background dictation warmup
 - optional whisper.cpp server backend via `VOICE_ASR_BACKEND=whispercpp_server`
 - wake-word runtime toggles (`wakeword-enable|disable|toggle|status`) with state under `~/.local/state/voice-hotkey-wakeword.json`
@@ -71,6 +71,8 @@ python -m venv ~/.venvs/voice
 ```
 
 ## Environment overrides
+
+Values below are code defaults unless explicitly noted; systemd templates may set different recommended overrides.
 
 ```bash
 export VOICE_COMMAND_MODEL=large-v3-turbo
@@ -110,7 +112,7 @@ export VOICE_WAKEWORD_MODEL_PATH="$HOME/.config/hypr-voice-controls/wakeword/"
 export VOICE_WAKEWORD_MODEL_FILE=""
 export VOICE_WAKEWORD_THRESHOLD=0.72
 export VOICE_WAKEWORD_MIN_CONSECUTIVE=3
-export VOICE_WAKEWORD_COOLDOWN_MS=3000
+export VOICE_WAKEWORD_COOLDOWN_MS=1500
 export VOICE_WAKEWORD_NO_SPEECH_REARM_MS=5000
 export VOICE_WAKEWORD_FRAME_MS=40
 export VOICE_WAKEWORD_PREROLL_MS=200
@@ -127,8 +129,13 @@ Recommended quality-focused setup:
 Run always-on wake detection (custom model files in `~/.config/hypr-voice-controls/wakeword/`):
 
 ```bash
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --wakeword-daemon
+<REPO_DIR>/voice-hotkey.py --wakeword-daemon
 ```
+
+By default, the wakeword service template sets `VOICE_WAKEWORD_ENABLED=false`.
+Enable wake detection at runtime with `wakeword-enable`/`wakeword-toggle`, or set that env var to `true` in your service file.
+
+Wakeword triggers are automatically suppressed while manual hold capture is active (`command-start`/`dictate-start`) to prevent overlap.
 
 Systemd template:
 
@@ -183,15 +190,15 @@ Use `bind` for key press and `bindr` for key release.
 
 ```conf
 # command mode
-bind  = SUPER, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-start
-bindr = SUPER, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-stop
+bind  = SUPER, V, exec, <REPO_DIR>/voice-hotkey.py --input command-start
+bindr = SUPER, V, exec, <REPO_DIR>/voice-hotkey.py --input command-stop
 
 # dictation mode
-bind  = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-start
-bindr = SUPER SHIFT, V, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-stop
+bind  = SUPER SHIFT, V, exec, <REPO_DIR>/voice-hotkey.py --input dictate-start
+bindr = SUPER SHIFT, V, exec, <REPO_DIR>/voice-hotkey.py --input dictate-stop
 
 # wake-word runtime toggle (reuses previous language-toggle key)
-bind = SUPER, B, exec, /home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input wakeword-toggle
+bind = SUPER, B, exec, <REPO_DIR>/voice-hotkey.py --input wakeword-toggle
 ```
 
 Reload Hyprland after edits:
@@ -234,21 +241,21 @@ exec-once = systemctl --user restart voice-hotkey.service
 ## Manual smoke tests
 
 ```bash
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-start
+<REPO_DIR>/voice-hotkey.py --input command-start
 sleep 1
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-stop
+<REPO_DIR>/voice-hotkey.py --input command-stop
 ```
 
 ```bash
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-start
+<REPO_DIR>/voice-hotkey.py --input dictate-start
 sleep 1
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input dictate-stop
+<REPO_DIR>/voice-hotkey.py --input dictate-stop
 ```
 
 ```bash
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input wakeword-status
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input wakeword-toggle
-/home/shoutcape/Github/hypr-voice-controls/voice-hotkey.py --input command-auto
+<REPO_DIR>/voice-hotkey.py --input wakeword-status
+<REPO_DIR>/voice-hotkey.py --input wakeword-toggle
+<REPO_DIR>/voice-hotkey.py --input command-auto
 ```
 
 ```bash
