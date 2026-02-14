@@ -989,8 +989,8 @@ def _execute_daemon_request(request: dict) -> int:
 def _send_daemon_response(conn: socket.socket, rc: int) -> None:
     try:
         conn.sendall((json.dumps({"rc": rc}) + "\n").encode("utf-8"))
-    except OSError:
-        pass
+    except OSError as exc:
+        LOGGER.debug("Voice daemon response send failed rc=%s err=%s", rc, exc)
 
 
 def _handle_daemon_connection(conn: socket.socket) -> None:

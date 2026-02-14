@@ -58,8 +58,8 @@ def pid_alive(pid: int) -> bool:
             state = stat_raw.split(") ", 1)[1][:1]
             if state == "Z":
                 return False
-    except Exception:
-        pass
+    except (OSError, ValueError, IndexError) as exc:
+        LOGGER.debug("Could not parse process stat pid=%s path=%s err=%s", pid, stat_path, exc)
 
     return True
 

@@ -17,8 +17,8 @@ def setup_logger() -> logging.Logger:
     logger.addHandler(handler)
     try:
         os.chmod(LOG_PATH, 0o600)
-    except Exception:
-        pass
+    except OSError as exc:
+        logger.debug("Could not chmod log path=%s err=%s", LOG_PATH, exc)
     return logger
 
 

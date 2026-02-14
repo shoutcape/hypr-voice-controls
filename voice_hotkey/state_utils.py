@@ -23,12 +23,12 @@ def write_private_text(path: Path, content: str) -> None:
         if tmp_path.exists():
             try:
                 tmp_path.unlink()
-            except OSError:
-                pass
+            except OSError as exc:
+                LOGGER.debug("Could not remove temp state file path=%s err=%s", tmp_path, exc)
     try:
         os.chmod(path, 0o600)
-    except OSError:
-        pass
+    except OSError as exc:
+        LOGGER.debug("Could not chmod state file path=%s err=%s", path, exc)
 
 
 def get_saved_dictation_language() -> str:
@@ -37,7 +37,7 @@ def get_saved_dictation_language() -> str:
         if value == "en":
             return value
     except FileNotFoundError:
-        pass
+        LOGGER.debug("Language file not found path=%s; defaulting to en", LANGUAGE_PATH)
     except Exception as exc:
         LOGGER.warning("Could not read language file: %s", exc)
     return "en"
