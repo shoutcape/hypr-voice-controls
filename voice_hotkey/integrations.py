@@ -1,8 +1,11 @@
 import subprocess
 import time
+import unicodedata
 
 from .config import (
+    DICTATION_ALLOW_NEWLINES,
     DICTATION_INJECTOR,
+    DICTATION_STRICT_TEXT,
     LOG_COMMAND_OUTPUT_MAX,
     NOTIFY_TIMEOUT_MS,
     TTS_COOLDOWN_MS,
@@ -116,18 +119,40 @@ def notify(title: str, body: str) -> None:
 
 
 def inject_text_into_focused_input(text: str) -> bool:
+    raw_stats = _dictation_debug_stats(text)
+    safe_text = _sanitize_dictation_text(text)
+    safe_stats = _dictation_debug_stats(safe_text)
+    LOGGER.info(
+        "Dictation inject debug raw_len=%s safe_len=%s raw_qmarks=%s safe_qmarks=%s raw_tabs=%s safe_tabs=%s raw_newlines=%s safe_newlines=%s raw_controls=%s safe_controls=%s injector=%s",
+        raw_stats["len"],
+        safe_stats["len"],
+        raw_stats["qmarks"],
+        safe_stats["qmarks"],
+        raw_stats["tabs"],
+        safe_stats["tabs"],
+        raw_stats["newlines"],
+        safe_stats["newlines"],
+        raw_stats["controls"],
+        safe_stats["controls"],
+        DICTATION_INJECTOR,
+    )
+    if not safe_text:
+        LOGGER.warning("Dictation text empty after sanitization; skipping injection")
+        return False
+
     if DICTATION_INJECTOR == "wtype":
         if not has_tool("wtype"):
             LOGGER.warning("wtype not found; falling back to wl-copy + hyprctl paste path")
-            return _inject_text_via_clipboard(text)
+            return _inject_text_via_clipboard(safe_text)
         try:
-            timeout = min(20, max(3, int(len(text) / 80) + 2))
-            proc = subprocess.run(["wtype", text], check=False, capture_output=True, text=True, timeout=timeout)
+            timeout = min(20, max(3, int(len(safe_text) / 80) + 2))
+            proc = subprocess.run(["wtype", safe_text], check=False, capture_output=True, text=True, timeout=timeout)
         except Exception as exc:
             LOGGER.error("wtype injection failed: %s", exc)
-            return _inject_text_via_clipboard(text)
+            return _inject_text_via_clipboard(safe_text)
 
         if proc.returncode == 0:
+            LOGGER.info("Dictation inject path=wtype result=ok text_len=%s qmarks=%s", safe_stats["len"], safe_stats["qmarks"])
             return True
 
         LOGGER.error(
@@ -136,9 +161,58 @@ def inject_text_into_focused_input(text: str) -> bool:
             _truncate(proc.stdout.strip()),
             _truncate(proc.stderr.strip()),
         )
-        return _inject_text_via_clipboard(text)
+        return _inject_text_via_clipboard(safe_text)
 
-    return _inject_text_via_clipboard(text)
+    return _inject_text_via_clipboard(safe_text)
+
+
+def _sanitize_dictation_text(text: str) -> str:
+    sanitized = text
+    # Remove bidi/control formatting characters that can cause confusing edits.
+    sanitized = "".join(ch for ch in sanitized if unicodedata.category(ch) != "Cf")
+
+    # Normalize CRLF/CR to LF first.
+    sanitized = sanitized.replace("\r\n", "\n").replace("\r", "\n")
+
+    out_chars: list[str] = []
+    for ch in sanitized:
+        code = ord(ch)
+        if ch == "\n":
+            out_chars.append("\n" if DICTATION_ALLOW_NEWLINES else " ")
+            continue
+        if ch == "\t":
+            out_chars.append(" ")
+            continue
+        if code < 32 or code == 127:
+            out_chars.append(" ")
+            continue
+        out_chars.append(ch)
+
+    sanitized = "".join(out_chars)
+    if DICTATION_ALLOW_NEWLINES:
+        sanitized = "\n".join(" ".join(line.split()) for line in sanitized.split("\n"))
+    else:
+        sanitized = " ".join(sanitized.split())
+
+    if DICTATION_STRICT_TEXT:
+        sanitized = sanitized.strip()
+
+    return sanitized
+
+
+def _dictation_debug_stats(text: str) -> dict[str, int]:
+    controls = 0
+    for ch in text:
+        code = ord(ch)
+        if (code < 32 and ch not in ("\t", "\n", "\r")) or code == 127:
+            controls += 1
+    return {
+        "len": len(text),
+        "qmarks": text.count("?"),
+        "tabs": text.count("\t"),
+        "newlines": text.count("\n") + text.count("\r"),
+        "controls": controls,
+    }
 
 
 def _inject_text_via_clipboard(text: str) -> bool:
@@ -185,6 +259,7 @@ def _inject_text_via_clipboard(text: str) -> bool:
             _truncate(proc.stderr.strip()),
         )
         if proc.returncode == 0:
+            LOGGER.info("Dictation inject path=clipboard result=ok text_len=%s qmarks=%s", len(text), text.count("?"))
             return True
 
     return False
