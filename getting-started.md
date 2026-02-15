@@ -157,11 +157,11 @@ Optional wake daemon smoke test (requires model file under `~/.config/hypr-voice
 <REPO_DIR>/voice-hotkey.py --wakeword-daemon
 ```
 
-If you use `examples/systemd/wakeword.service` as-is, wake detection starts disabled (`VOICE_WAKEWORD_ENABLED=false`).
-Enable it at runtime with:
+If you use `examples/systemd/wakeword.service` as-is, wake detection starts enabled (`VOICE_WAKEWORD_ENABLED=true`).
+Disable it at runtime with:
 
 ```bash
-<REPO_DIR>/voice-hotkey.py --input wakeword-enable
+<REPO_DIR>/voice-hotkey.py --input wakeword-disable
 ```
 
 Wakeword triggers are automatically suppressed while manual hold capture is active (`command-start`/`dictate-start`) to prevent overlap.
@@ -219,9 +219,7 @@ Environment=VOICE_TTS_ENABLED=false
 Environment=VOICE_TTS_COOLDOWN_MS=900
 Environment=VOICE_TTS_MAX_CHARS=90
 Environment=VOICE_STATE_MAX_AGE_SECONDS=900
-Environment=VOICE_WAKE_DICTATE_SESSION_MAX_SECONDS=16
 Environment=VOICE_WAKE_INTENT_VAD_END_SILENCE_MS=700
-Environment=VOICE_WAKE_DICTATE_VAD_END_SILENCE_MS=1800
 Environment=VOICE_WAKEWORD_FRAME_MS=40
 Environment=VOICE_WAKEWORD_PREROLL_MS=200
 ```

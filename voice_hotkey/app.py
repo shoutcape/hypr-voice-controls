@@ -9,14 +9,13 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .audio import record_clip, stop_recording_pid
+from .audio import build_ffmpeg_wav_capture_cmd, record_clip, stop_recording_pid
 from .commands import match_command, normalize
 from .config import (
-    AUDIO_BACKEND,
-    AUDIO_SOURCE,
     COMMAND_STATE_PATH,
     DAEMON_CONNECT_TIMEOUT,
     DAEMON_MAX_REQUEST_BYTES,
@@ -51,6 +50,7 @@ from .overlay import show_partial
 from .orchestrator import run_endpointed_command_session
 from .state_utils import (
     get_saved_dictation_language,
+    is_capture_state_active_payload,
     read_wakeword_enabled,
     state_required_substrings,
     set_wakeword_enabled,
@@ -132,12 +132,6 @@ def _strip_leading_wake_mode_keywords(text: str) -> str:
     return " ".join(tokens).strip()
 
 
-def _is_state_stale(started_at: float | int | None) -> bool:
-    if not isinstance(started_at, (int, float)):
-        return False
-    return (time.time() - float(started_at)) > STATE_MAX_AGE_SECONDS
-
-
 def _recv_json_line(sock: socket.socket) -> dict:
     chunks: list[bytes] = []
     total = 0
@@ -191,24 +185,6 @@ def validate_environment() -> bool:
     return True
 
 
-def _build_ffmpeg_capture_cmd(audio_path: Path) -> list[str]:
-    return [
-        "ffmpeg",
-        "-y",
-        "-loglevel",
-        "error",
-        "-f",
-        AUDIO_BACKEND,
-        "-i",
-        AUDIO_SOURCE,
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        str(audio_path),
-    ]
-
-
 def _wait_for_captured_audio(audio_path: Path, timeout_seconds: float = 2.0) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
@@ -237,9 +213,14 @@ def _stop_press_hold_recorder(
     if pid <= 0:
         return
 
-    if _is_state_stale(started_at):
+    capture_state = {
+        "pid": pid,
+        "started_at": started_at,
+        "pid_required_substrings": required_substrings,
+    }
+    if not is_capture_state_active_payload(capture_state):
         LOGGER.warning(
-            "Skipping stale %s recorder stop pid=%s started_at=%s max_age=%ss",
+            "Skipping inactive %s recorder stop pid=%s started_at=%s max_age=%ss",
             stale_label,
             pid,
             started_at,
@@ -276,34 +257,54 @@ def _process_press_hold_transcription(
     return on_transcription(text, detected_language, language_probability, language)
 
 
+@dataclass(frozen=True)
+class _PressHoldStartProfile:
+    state_path: Path
+    tmp_prefix: str
+    source_key: str
+    preempt_label: str
+    preempt_fn: Callable[[], int]
+    notify_text: str
+    start_log_key: str
+
+
+@dataclass(frozen=True)
+class _PressHoldStopProfile:
+    state_path: Path
+    no_active_source: str
+    no_active_trigger_source: str
+    no_active_notify: str
+    state_label: str
+    processing_notify: str
+    stale_label: str
+    stop_label: str
+    no_speech_source: str
+    transcribe_mode: str
+    transcribe_failure_label: str
+    transcribe_failure_source: str
+
+
 def _start_press_hold_session(
-    *,
-    state_path: Path,
-    tmp_prefix: str,
-    source_key: str,
-    preempt_label: str,
-    preempt_fn: Callable[[], int],
-    notify_text: str,
-    start_log_key: str,
+    profile: _PressHoldStartProfile,
 ) -> int:
-    if state_path.exists():
-        LOGGER.info("Voice hotkey source=%s detected existing active state; preempting old %s", source_key, preempt_label)
-        preempt_fn()
+    if profile.state_path.exists():
+        LOGGER.info("Voice hotkey source=%s detected existing active state; preempting old %s", profile.source_key, profile.preempt_label)
+        profile.preempt_fn()
 
     language = get_saved_dictation_language()
-    tmpdir = tempfile.mkdtemp(prefix=tmp_prefix)
+    tmpdir = tempfile.mkdtemp(prefix=profile.tmp_prefix)
     audio_path = Path(tmpdir) / "capture.wav"
 
     try:
         proc = subprocess.Popen(
-            _build_ffmpeg_capture_cmd(audio_path),
+            build_ffmpeg_wav_capture_cmd(audio_path),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             text=True,
         )
     except FileNotFoundError:
         notify("Voice", "ffmpeg not found")
-        LOGGER.error("Could not start %s recorder: ffmpeg not found", preempt_label)
+        LOGGER.error("Could not start %s recorder: ffmpeg not found", profile.preempt_label)
         return 1
 
     state = {
@@ -314,34 +315,22 @@ def _start_press_hold_session(
         "language": language,
         "started_at": time.time(),
     }
-    write_private_text(state_path, json.dumps(state))
-    notify("Voice", notify_text.format(language=language))
-    LOGGER.info("Voice hotkey %s pid=%s language=%s audio=%s", start_log_key, proc.pid, language, audio_path)
+    write_private_text(profile.state_path, json.dumps(state))
+    notify("Voice", profile.notify_text.format(language=language))
+    LOGGER.info("Voice hotkey %s pid=%s language=%s audio=%s", profile.start_log_key, proc.pid, language, audio_path)
     return 0
 
 
 def _stop_press_hold_session(
-    *,
-    state_path: Path,
-    no_active_source: str,
-    no_active_trigger_source: str,
-    no_active_notify: str,
-    state_label: str,
-    processing_notify: str,
-    stale_label: str,
-    stop_label: str,
-    no_speech_source: str,
-    transcribe_mode: str,
-    transcribe_failure_label: str,
-    transcribe_failure_source: str,
+    profile: _PressHoldStopProfile,
     on_transcription: Callable[[str, str | None, float | None, str], int],
 ) -> int:
-    if not state_path.exists():
-        LOGGER.info("Voice hotkey end status=%s source=%s", no_active_source, no_active_trigger_source)
-        notify("Voice", no_active_notify)
+    if not profile.state_path.exists():
+        LOGGER.info("Voice hotkey end status=%s source=%s", profile.no_active_source, profile.no_active_trigger_source)
+        notify("Voice", profile.no_active_notify)
         return 0
 
-    state = _load_press_hold_state(state_path, state_label)
+    state = _load_press_hold_state(profile.state_path, profile.state_label)
     if state is None:
         return 1
 
@@ -352,13 +341,13 @@ def _stop_press_hold_session(
     required_substrings = state_required_substrings(state)
     started_at = state.get("started_at")
 
-    notify("Voice", processing_notify)
+    notify("Voice", profile.processing_notify)
 
     _stop_press_hold_recorder(
         pid=pid,
         started_at=started_at,
-        stale_label=stale_label,
-        stop_label=stop_label,
+        stale_label=profile.stale_label,
+        stop_label=profile.stop_label,
         required_substrings=required_substrings,
     )
 
@@ -368,14 +357,14 @@ def _stop_press_hold_session(
         return _process_press_hold_transcription(
             audio_path=audio_path,
             language=language,
-            no_speech_source=no_speech_source,
-            transcribe_mode=transcribe_mode,
-            transcribe_failure_label=transcribe_failure_label,
-            transcribe_failure_source=transcribe_failure_source,
+            no_speech_source=profile.no_speech_source,
+            transcribe_mode=profile.transcribe_mode,
+            transcribe_failure_label=profile.transcribe_failure_label,
+            transcribe_failure_source=profile.transcribe_failure_source,
             on_transcription=on_transcription,
         )
     finally:
-        state_path.unlink(missing_ok=True)
+        profile.state_path.unlink(missing_ok=True)
         if tmpdir.exists():
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -398,25 +387,29 @@ def _complete_dictation_output(spoken: str, *, source: str) -> int:
 
 def start_press_hold_dictation() -> int:
     return _start_press_hold_session(
-        state_path=DICTATE_STATE_PATH,
-        tmp_prefix="voice-dictate-hold-",
-        source_key="dictate_start",
-        preempt_label="dictation",
-        preempt_fn=stop_press_hold_dictation,
-        notify_text="Recording... release keys to transcribe ({language})",
-        start_log_key="dictate_start",
+        _PressHoldStartProfile(
+            state_path=DICTATE_STATE_PATH,
+            tmp_prefix="voice-dictate-hold-",
+            source_key="dictate_start",
+            preempt_label="dictation",
+            preempt_fn=stop_press_hold_dictation,
+            notify_text="Recording... release keys to transcribe ({language})",
+            start_log_key="dictate_start",
+        )
     )
 
 
 def start_press_hold_command() -> int:
     return _start_press_hold_session(
-        state_path=COMMAND_STATE_PATH,
-        tmp_prefix="voice-command-hold-",
-        source_key="command_start",
-        preempt_label="command",
-        preempt_fn=stop_press_hold_command,
-        notify_text="Listening for command ({language})... release keys to run",
-        start_log_key="command_start",
+        _PressHoldStartProfile(
+            state_path=COMMAND_STATE_PATH,
+            tmp_prefix="voice-command-hold-",
+            source_key="command_start",
+            preempt_label="command",
+            preempt_fn=stop_press_hold_command,
+            notify_text="Listening for command ({language})... release keys to run",
+            start_log_key="command_start",
+        )
     )
 
 
@@ -443,18 +436,20 @@ def stop_press_hold_dictation() -> int:
         return _complete_dictation_output(spoken, source="dictate_hold")
 
     return _stop_press_hold_session(
-        state_path=DICTATE_STATE_PATH,
-        no_active_source="no_active_dictation",
-        no_active_trigger_source="dictate_stop",
-        no_active_notify="No active dictation",
-        state_label="dictation",
-        processing_notify="Key released. Processing dictation...",
-        stale_label="dictation",
-        stop_label="Dictation ffmpeg",
-        no_speech_source="dictate_hold",
-        transcribe_mode="dictate",
-        transcribe_failure_label="Dictation hold",
-        transcribe_failure_source="dictate_hold",
+        _PressHoldStopProfile(
+            state_path=DICTATE_STATE_PATH,
+            no_active_source="no_active_dictation",
+            no_active_trigger_source="dictate_stop",
+            no_active_notify="No active dictation",
+            state_label="dictation",
+            processing_notify="Key released. Processing dictation...",
+            stale_label="dictation",
+            stop_label="Dictation ffmpeg",
+            no_speech_source="dictate_hold",
+            transcribe_mode="dictate",
+            transcribe_failure_label="Dictation hold",
+            transcribe_failure_source="dictate_hold",
+        ),
         on_transcription=_on_dictation_transcription,
     )
 
@@ -474,18 +469,20 @@ def stop_press_hold_command() -> int:
         )
 
     return _stop_press_hold_session(
-        state_path=COMMAND_STATE_PATH,
-        no_active_source="no_active_command",
-        no_active_trigger_source="command_stop",
-        no_active_notify="No active voice command",
-        state_label="command",
-        processing_notify="Key released. Processing command...",
-        stale_label="command",
-        stop_label="Command ffmpeg",
-        no_speech_source="voice_hold",
-        transcribe_mode="command",
-        transcribe_failure_label="Command hold",
-        transcribe_failure_source="voice_hold",
+        _PressHoldStopProfile(
+            state_path=COMMAND_STATE_PATH,
+            no_active_source="no_active_command",
+            no_active_trigger_source="command_stop",
+            no_active_notify="No active voice command",
+            state_label="command",
+            processing_notify="Key released. Processing command...",
+            stale_label="command",
+            stop_label="Command ffmpeg",
+            no_speech_source="voice_hold",
+            transcribe_mode="command",
+            transcribe_failure_label="Command hold",
+            transcribe_failure_source="voice_hold",
+        ),
         on_transcription=_on_command_transcription,
     )
 

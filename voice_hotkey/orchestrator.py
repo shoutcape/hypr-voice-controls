@@ -25,6 +25,8 @@ from .state_utils import write_private_text
 from .stt import transcribe
 from .vad import EndpointVAD
 
+NO_SPEECH_EXIT_CODE = 3
+
 
 @dataclass(frozen=True)
 class _EndpointSessionConfig:
@@ -184,7 +186,7 @@ def _handle_no_speech_result(*, source: str, config: _EndpointSessionConfig, pea
         config.start_timeout_ms,
         config.session_max_seconds,
     )
-    return 3
+    return NO_SPEECH_EXIT_CODE
 
 
 def _transcribe_and_dispatch(

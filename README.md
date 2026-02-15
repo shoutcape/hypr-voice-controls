@@ -87,13 +87,11 @@ export VOICE_SAMPLE_RATE_HZ=16000
 export VOICE_FRAME_MS=20
 export VOICE_SESSION_MAX_SECONDS=12
 export VOICE_WAKE_SESSION_MAX_SECONDS=8
-export VOICE_WAKE_DICTATE_SESSION_MAX_SECONDS=16
 export VOICE_WAKE_START_SPEECH_TIMEOUT_MS=7000
 export VOICE_WAKE_VAD_RMS_THRESHOLD=80
 export VOICE_WAKE_VAD_MIN_SPEECH_MS=20
 export VOICE_WAKE_VAD_END_SILENCE_MS=300
 export VOICE_WAKE_INTENT_VAD_END_SILENCE_MS=700
-export VOICE_WAKE_DICTATE_VAD_END_SILENCE_MS=1800
 export VOICE_VAD_RMS_THRESHOLD=600
 export VOICE_VAD_MIN_SPEECH_MS=120
 export VOICE_VAD_END_SILENCE_MS=800
@@ -107,7 +105,7 @@ export VOICE_TTS_ENABLED=false
 export VOICE_TTS_COOLDOWN_MS=900
 export VOICE_TTS_MAX_CHARS=90
 export VOICE_STATE_MAX_AGE_SECONDS=900
-export VOICE_WAKEWORD_ENABLED=false
+export VOICE_WAKEWORD_ENABLED=true
 export VOICE_WAKEWORD_MODEL_PATH="$HOME/.config/hypr-voice-controls/wakeword/"
 export VOICE_WAKEWORD_MODEL_FILE=""
 export VOICE_WAKEWORD_THRESHOLD=0.72
@@ -132,8 +130,8 @@ Run always-on wake detection (custom model files in `~/.config/hypr-voice-contro
 <REPO_DIR>/voice-hotkey.py --wakeword-daemon
 ```
 
-By default, the wakeword service template sets `VOICE_WAKEWORD_ENABLED=false`.
-Enable wake detection at runtime with `wakeword-enable`/`wakeword-toggle`, or set that env var to `true` in your service file.
+By default, the wakeword service template sets `VOICE_WAKEWORD_ENABLED=true`.
+Disable wake detection at runtime with `wakeword-disable`/`wakeword-toggle`, or set that env var to `false` in your service file.
 
 Wakeword triggers are automatically suppressed while manual hold capture is active (`command-start`/`dictate-start`) to prevent overlap.
 

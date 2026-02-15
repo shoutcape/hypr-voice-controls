@@ -1,16 +1,13 @@
 import time
 from collections import deque
-import json
 import math
 import shutil
 import subprocess
 
-from .audio import pid_alive, pid_cmdline_contains
 from .audio_stream import FFmpegPCMStream
 from .config import (
     COMMAND_STATE_PATH,
     DICTATE_STATE_PATH,
-    STATE_MAX_AGE_SECONDS,
     WAKEWORD_COOLDOWN_MS,
     WAKEWORD_FRAME_MS,
     WAKEWORD_MODEL_DIR,
@@ -26,7 +23,8 @@ from .config import (
     WAKE_SESSION_STATE_PATH,
 )
 from .logging_utils import LOGGER
-from .state_utils import read_wakeword_enabled_cached, state_required_substrings
+from .orchestrator import NO_SPEECH_EXIT_CODE
+from .state_utils import is_capture_state_active, read_wakeword_enabled_cached
 
 
 _WAKEWORD_ENABLED_CACHE: bool | None = None
@@ -63,39 +61,11 @@ def _wakeword_enabled() -> bool:
     return enabled
 
 
-def _capture_state_active(state_path, now: float) -> bool:
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return False
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        LOGGER.warning("Wakeword could not read capture state path=%s err=%s", state_path, exc)
-        return False
-
-    pid = state.get("pid")
-    if not isinstance(pid, int):
-        return False
-
-    started_at = state.get("started_at")
-    if isinstance(started_at, (int, float)):
-        if (now - float(started_at)) > STATE_MAX_AGE_SECONDS:
-            return False
-
-    if not pid_alive(pid):
-        return False
-
-    required_substrings = state_required_substrings(state)
-    if not pid_cmdline_contains(pid, required_substrings=required_substrings):
-        return False
-
-    return True
-
-
 def _manual_capture_active(now: float) -> bool:
     return (
-        _capture_state_active(DICTATE_STATE_PATH, now)
-        or _capture_state_active(COMMAND_STATE_PATH, now)
-        or _capture_state_active(WAKE_SESSION_STATE_PATH, now)
+        is_capture_state_active(DICTATE_STATE_PATH, now=now)
+        or is_capture_state_active(COMMAND_STATE_PATH, now=now)
+        or is_capture_state_active(WAKE_SESSION_STATE_PATH, now=now)
     )
 
 
@@ -272,7 +242,7 @@ def run_wakeword_daemon() -> int:
                 ring=ring,
                 request_daemon=request_daemon,
             )
-            if rc == 3:
+            if rc == NO_SPEECH_EXIT_CODE:
                 last_trigger_at = now
                 rearm_until = now + (WAKEWORD_NO_SPEECH_REARM_MS / 1000.0)
                 LOGGER.info(

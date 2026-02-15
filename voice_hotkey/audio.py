@@ -8,7 +8,7 @@ from .config import AUDIO_BACKEND, AUDIO_SECONDS, AUDIO_SOURCE
 from .logging_utils import LOGGER
 
 
-def record_clip(output_path: Path, duration_seconds: int = AUDIO_SECONDS) -> bool:
+def build_ffmpeg_wav_capture_cmd(output_path: Path, *, duration_seconds: int | None = None) -> list[str]:
     cmd = [
         "ffmpeg",
         "-y",
@@ -18,14 +18,23 @@ def record_clip(output_path: Path, duration_seconds: int = AUDIO_SECONDS) -> boo
         AUDIO_BACKEND,
         "-i",
         AUDIO_SOURCE,
-        "-t",
-        str(duration_seconds),
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        str(output_path),
     ]
+    if duration_seconds is not None:
+        cmd.extend(["-t", str(duration_seconds)])
+    cmd.extend(
+        [
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            str(output_path),
+        ]
+    )
+    return cmd
+
+
+def record_clip(output_path: Path, duration_seconds: int = AUDIO_SECONDS) -> bool:
+    cmd = build_ffmpeg_wav_capture_cmd(output_path, duration_seconds=duration_seconds)
     try:
         proc = subprocess.run(cmd, check=False, timeout=duration_seconds + 4, capture_output=True, text=True)
     except Exception as exc:
