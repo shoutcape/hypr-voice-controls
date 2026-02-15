@@ -59,21 +59,22 @@ from .state_utils import (
 from .stt import dictation_model_name, is_model_loaded, preload_models, transcribe, warm_model
 
 
-ALLOWED_INPUT_MODES = {
-    "voice",
-    "text",
-    "dictate",
-    "dictate-start",
-    "dictate-stop",
-    "command-start",
-    "command-stop",
-    "command-auto",
-    "wake-start",
-    "wakeword-enable",
-    "wakeword-disable",
-    "wakeword-toggle",
-    "wakeword-status",
+INPUT_MODE_DESCRIPTIONS: dict[str, str] = {
+    "voice": "Capture short command clip and execute matching action",
+    "dictate": "Capture dictation clip and paste into focused app",
+    "dictate-start": "Start press/hold dictation recording",
+    "dictate-stop": "Stop dictation hold, transcribe, and paste",
+    "command-start": "Start press/hold command recording",
+    "command-stop": "Stop command hold, transcribe, and execute action",
+    "command-auto": "Endpointed command session until VAD endpoint",
+    "wake-start": "Wake session intent capture and routed handling",
+    "wakeword-enable": "Enable wakeword runtime state",
+    "wakeword-disable": "Disable wakeword runtime state",
+    "wakeword-toggle": "Toggle wakeword runtime state",
+    "wakeword-status": "Read wakeword runtime state",
 }
+
+ALLOWED_INPUT_MODES = set(INPUT_MODE_DESCRIPTIONS)
 
 WAKEWORD_INPUT_MODES = {
     "wake-start",
@@ -81,6 +82,19 @@ WAKEWORD_INPUT_MODES = {
     "wakeword-disable",
     "wakeword-toggle",
     "wakeword-status",
+}
+
+NON_AUDIO_INPUT_MODES = {
+    "wakeword-enable",
+    "wakeword-disable",
+    "wakeword-toggle",
+    "wakeword-status",
+}
+
+AUDIO_RESCAN_SERVICES = ("wireplumber", "pipewire", "pipewire-pulse")
+
+LEGACY_INPUT_ALIASES = {
+    "text": "dictate",
 }
 
 WAKE_PREFIXES = (
@@ -102,6 +116,80 @@ WAKE_INTENT_DICTATE_KEYWORDS = {
     "dictation",
     "write",
 }
+
+
+def _format_available_actions() -> str:
+    lines = ["Available actions:"]
+    for mode in sorted(ALLOWED_INPUT_MODES):
+        lines.append(f"  {mode:16} {INPUT_MODE_DESCRIPTIONS[mode]}")
+    return "\n".join(lines)
+
+
+def _normalize_input_mode(input_mode: str) -> str:
+    mapped = LEGACY_INPUT_ALIASES.get(input_mode, input_mode)
+    if mapped != input_mode:
+        LOGGER.info("Normalized legacy input=%s to input=%s", input_mode, mapped)
+    return mapped
+
+
+def _run_cli_command(argv: list[str], *, timeout_seconds: int) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", "timeout"
+    except OSError as exc:
+        return 127, "", str(exc)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _print_audio_inventory() -> int:
+    sections = [
+        ("cards", ["pactl", "list", "short", "cards"]),
+        ("sinks", ["pactl", "list", "short", "sinks"]),
+        ("sources", ["pactl", "list", "short", "sources"]),
+    ]
+    failures = 0
+    for title, cmd in sections:
+        rc, out, err = _run_cli_command(cmd, timeout_seconds=8)
+        print(f"[{title}]")
+        if rc != 0:
+            failures += 1
+            detail = err.strip() or f"command_failed rc={rc}"
+            print(detail)
+        else:
+            rendered = out.strip() if out.strip() else "(none)"
+            print(rendered)
+        print()
+    if failures:
+        LOGGER.warning("Audio inventory had %s failing section(s)", failures)
+        return 1
+    return 0
+
+
+def _rescan_audio_devices() -> int:
+    restart_cmd = ["systemctl", "--user", "restart", *AUDIO_RESCAN_SERVICES]
+    rc, _out, err = _run_cli_command(restart_cmd, timeout_seconds=20)
+    if rc != 0:
+        LOGGER.error("Audio rescan failed rc=%s err=%s", rc, err.strip())
+        print("Failed to restart user audio services.")
+        if err.strip():
+            print(err.strip())
+        return 1
+
+    for _attempt in range(10):
+        cards_rc, cards_out, _cards_err = _run_cli_command(["pactl", "list", "short", "cards"], timeout_seconds=5)
+        if cards_rc == 0 and cards_out.strip():
+            break
+        time.sleep(0.4)
+
+    print("Audio services restarted.")
+    return _print_audio_inventory()
 
 
 def _sanitize_transcript(value: str) -> str:
@@ -630,14 +718,44 @@ def handle_command_text(raw_text: str, source: str, language: str | None, langua
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Voice/text hotkey command runner")
+    parser = argparse.ArgumentParser(description="Voice/dictation hotkey command runner")
     parser.add_argument(
         "--input",
-        choices=sorted(ALLOWED_INPUT_MODES),
         default="voice",
+        help="Input action (use --list-actions to discover supported values)",
     )
     parser.add_argument("--daemon", action="store_true")
     parser.add_argument("--wakeword-daemon", action="store_true")
+    parser.add_argument(
+        "--list-actions",
+        action="store_true",
+        help="Print available --input actions and exit",
+    )
+    parser.add_argument(
+        "--describe-action",
+        choices=sorted(ALLOWED_INPUT_MODES),
+        help="Print one action description and exit",
+    )
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Run --input directly without daemon RPC (debug)",
+    )
+    parser.add_argument(
+        "--list-audio",
+        action="store_true",
+        help="Print current audio cards/sinks/sources and exit",
+    )
+    parser.add_argument(
+        "--rescan-audio",
+        action="store_true",
+        help="Restart user audio services, then print audio inventory",
+    )
+    parser.add_argument(
+        "--restart-audio",
+        action="store_true",
+        help="Alias for --rescan-audio",
+    )
     return parser.parse_args()
 
 
@@ -747,6 +865,7 @@ def _run_voice_command_capture() -> int:
 
 
 def handle_input(input_mode: str) -> int:
+    input_mode = _normalize_input_mode(input_mode)
     if input_mode not in ALLOWED_INPUT_MODES:
         LOGGER.warning("Rejected unsupported input mode: %r", input_mode)
         return 2
@@ -771,7 +890,7 @@ def handle_input(input_mode: str) -> int:
 
     LOGGER.info("Voice hotkey trigger start input=%s", input_mode)
 
-    if input_mode in {"text", "dictate"}:
+    if input_mode == "dictate":
         return run_dictation()
 
     return _run_voice_command_capture()
@@ -836,7 +955,7 @@ def _parse_daemon_request(conn: socket.socket) -> dict | None:
 
 
 def _execute_daemon_request(request: dict) -> int:
-    input_mode = request.get("input", "voice")
+    input_mode = _normalize_input_mode(request.get("input", "voice"))
     if input_mode not in ALLOWED_INPUT_MODES:
         LOGGER.warning("Rejected invalid daemon input=%r", input_mode)
         return 2
@@ -905,6 +1024,22 @@ def run_daemon() -> int:
 
 def main(entry_script: Path | None = None) -> int:
     args = parse_args()
+    input_mode = _normalize_input_mode(args.input)
+
+    if args.list_actions:
+        print(_format_available_actions())
+        return 0
+
+    if args.describe_action:
+        description = INPUT_MODE_DESCRIPTIONS[args.describe_action]
+        print(f"{args.describe_action}: {description}")
+        return 0
+
+    if args.list_audio:
+        return _print_audio_inventory()
+
+    if args.rescan_audio or args.restart_audio:
+        return _rescan_audio_devices()
 
     if args.wakeword_daemon:
         from .wakeword import run_wakeword_daemon
@@ -914,4 +1049,13 @@ def main(entry_script: Path | None = None) -> int:
     if args.daemon:
         return run_daemon()
 
-    return request_daemon(args.input, entry_script=entry_script)
+    if args.local:
+        if input_mode not in NON_AUDIO_INPUT_MODES and not validate_environment():
+            return 1
+        try:
+            return handle_input(input_mode)
+        except Exception as exc:
+            LOGGER.exception("Local request handler failed input=%s: %s", input_mode, exc)
+            return 1
+
+    return request_daemon(input_mode, entry_script=entry_script)

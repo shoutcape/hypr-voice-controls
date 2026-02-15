@@ -8,6 +8,8 @@ Voice hotkey daemon for Hyprland with two paths:
 
 This repo is the canonical source. Hyprland binds and the user service should point to this checkout.
 
+Primary CLI command is `hvc`. The legacy `voice-hotkey.py` entrypoint remains for compatibility.
+
 ## Config templates
 
 Use repo examples instead of committing personal desktop config:
@@ -27,7 +29,8 @@ For private spoken-command definitions, copy `examples/hypr/voice-commands.json`
 
 ## Runtime architecture
 
-- `voice-hotkey.py`: stable compatibility entrypoint
+- `hvc`: primary CLI entrypoint
+- `voice-hotkey.py`: compatibility wrapper entrypoint
 - `voice_hotkey/app.py`: CLI modes, daemon client/server flow, orchestration
 - `voice_hotkey/commands.py`: normalization, JSON command loading, optional local fallback examples
 - `voice_hotkey/audio.py`: ffmpeg recording and stop-signal lifecycle
@@ -127,7 +130,7 @@ Recommended quality-focused setup:
 Run always-on wake detection (custom model files in `~/.config/hypr-voice-controls/wakeword/`):
 
 ```bash
-<REPO_DIR>/voice-hotkey.py --wakeword-daemon
+<REPO_DIR>/hvc --wakeword-daemon
 ```
 
 By default, the wakeword service template sets `VOICE_WAKEWORD_ENABLED=true`.
@@ -188,15 +191,15 @@ Use `bind` for key press and `bindr` for key release.
 
 ```conf
 # command mode
-bind  = SUPER, V, exec, <REPO_DIR>/voice-hotkey.py --input command-start
-bindr = SUPER, V, exec, <REPO_DIR>/voice-hotkey.py --input command-stop
+bind  = SUPER, V, exec, <REPO_DIR>/hvc --input command-start
+bindr = SUPER, V, exec, <REPO_DIR>/hvc --input command-stop
 
 # dictation mode
-bind  = SUPER SHIFT, V, exec, <REPO_DIR>/voice-hotkey.py --input dictate-start
-bindr = SUPER SHIFT, V, exec, <REPO_DIR>/voice-hotkey.py --input dictate-stop
+bind  = SUPER SHIFT, V, exec, <REPO_DIR>/hvc --input dictate-start
+bindr = SUPER SHIFT, V, exec, <REPO_DIR>/hvc --input dictate-stop
 
 # wake-word runtime toggle (reuses previous language-toggle key)
-bind = SUPER, B, exec, <REPO_DIR>/voice-hotkey.py --input wakeword-toggle
+bind = SUPER, B, exec, <REPO_DIR>/hvc --input wakeword-toggle
 ```
 
 Reload Hyprland after edits:
@@ -238,22 +241,44 @@ exec-once = systemctl --user restart voice-hotkey.service
 
 ## Manual smoke tests
 
+List all callable input actions (debug helper):
+
 ```bash
-<REPO_DIR>/voice-hotkey.py --input command-start
-sleep 1
-<REPO_DIR>/voice-hotkey.py --input command-stop
+<REPO_DIR>/hvc --list-actions
+<REPO_DIR>/hvc --describe-action wake-start
+```
+
+Run an action locally (without daemon RPC) for debugging:
+
+```bash
+<REPO_DIR>/hvc --input wakeword-status --local
+```
+
+Scan or rescan audio devices when headset/mic routing changes:
+
+```bash
+<REPO_DIR>/hvc --list-audio
+<REPO_DIR>/hvc --rescan-audio
+# shorthand alias
+<REPO_DIR>/hvc --restart-audio
 ```
 
 ```bash
-<REPO_DIR>/voice-hotkey.py --input dictate-start
+<REPO_DIR>/hvc --input command-start
 sleep 1
-<REPO_DIR>/voice-hotkey.py --input dictate-stop
+<REPO_DIR>/hvc --input command-stop
 ```
 
 ```bash
-<REPO_DIR>/voice-hotkey.py --input wakeword-status
-<REPO_DIR>/voice-hotkey.py --input wakeword-toggle
-<REPO_DIR>/voice-hotkey.py --input command-auto
+<REPO_DIR>/hvc --input dictate-start
+sleep 1
+<REPO_DIR>/hvc --input dictate-stop
+```
+
+```bash
+<REPO_DIR>/hvc --input wakeword-status
+<REPO_DIR>/hvc --input wakeword-toggle
+<REPO_DIR>/hvc --input command-auto
 ```
 
 ```bash
@@ -277,5 +302,5 @@ systemctl --user restart voice-hotkey.service
 - run syntax checks after edits:
 
 ```bash
-python3 -m py_compile voice-hotkey.py voice_hotkey/*.py
+python3 -m py_compile hvc voice-hotkey.py voice_hotkey/*.py
 ```

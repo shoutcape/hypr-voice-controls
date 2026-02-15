@@ -4,7 +4,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.venvs/voice/bin/python <REPO_DIR>/voice-hotkey.py --daemon
+ExecStart=%h/.venvs/voice/bin/python <REPO_DIR>/hvc --daemon
 Restart=on-failure
 RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse

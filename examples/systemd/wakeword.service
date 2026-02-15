@@ -4,13 +4,13 @@ After=graphical-session.target voice-hotkey.service
 
 [Service]
 Type=simple
-ExecStart=%h/.venvs/voice/bin/python <REPO_DIR>/voice-hotkey.py --wakeword-daemon
+ExecStart=%h/.venvs/voice/bin/python <REPO_DIR>/hvc --wakeword-daemon
 Restart=on-failure
 RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
 # Wakeword enabled by default; disable with:
-# <REPO_DIR>/voice-hotkey.py --input wakeword-disable
+# <REPO_DIR>/hvc --input wakeword-disable
 Environment=VOICE_WAKEWORD_ENABLED=true
 Environment=VOICE_WAKEWORD_MODEL_PATH=%h/.config/hypr-voice-controls/wakeword/
 Environment=VOICE_WAKEWORD_THRESHOLD=0.72

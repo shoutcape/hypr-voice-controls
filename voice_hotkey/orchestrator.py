@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import tempfile
 import time
 import wave
@@ -259,9 +260,10 @@ def run_endpointed_command_session(
     wrote_wake_state = False
     if source == "wake_start":
         try:
+            script_name = Path(sys.argv[0]).name or "voice-hotkey.py"
             state = {
                 "pid": os.getpid(),
-                "pid_required_substrings": ["voice-hotkey.py", "--daemon"],
+                "pid_required_substrings": [script_name, "--daemon"],
                 "started_at": time.time(),
             }
             write_private_text(WAKE_SESSION_STATE_PATH, json.dumps(state))

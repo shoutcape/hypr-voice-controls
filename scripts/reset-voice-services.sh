@@ -7,6 +7,8 @@ systemctl --user stop wakeword.service voice-hotkey.service || true
 
 pkill -f "voice-hotkey.py --wakeword-daemon" || true
 pkill -f "voice-hotkey.py --daemon" || true
+pkill -f "hvc --wakeword-daemon" || true
+pkill -f "hvc --daemon" || true
 
 rm -f "$STATE_DIR/voice-hotkey.sock"
 rm -f "$STATE_DIR/voice-hotkey.lock"

@@ -55,15 +55,15 @@ Add:
 
 ```conf
 # Voice command: hold SUPER+V, release to execute
-bind  = SUPER, V, exec, <REPO_DIR>/voice-hotkey.py --input command-start
-bindr = SUPER, V, exec, <REPO_DIR>/voice-hotkey.py --input command-stop
+bind  = SUPER, V, exec, <REPO_DIR>/hvc --input command-start
+bindr = SUPER, V, exec, <REPO_DIR>/hvc --input command-stop
 
 # Dictation: hold SUPER+SHIFT+V, release to paste
-bind  = SUPER SHIFT, V, exec, <REPO_DIR>/voice-hotkey.py --input dictate-start
-bindr = SUPER SHIFT, V, exec, <REPO_DIR>/voice-hotkey.py --input dictate-stop
+bind  = SUPER SHIFT, V, exec, <REPO_DIR>/hvc --input dictate-start
+bindr = SUPER SHIFT, V, exec, <REPO_DIR>/hvc --input dictate-stop
 
 # Toggle wake-word listener state
-bind = SUPER, B, exec, <REPO_DIR>/voice-hotkey.py --input wakeword-toggle
+bind = SUPER, B, exec, <REPO_DIR>/hvc --input wakeword-toggle
 ```
 
 If you prefer a separate file under `~/.config/hypr/conf.d/`, make sure your `~/.config/hypr/hyprland.conf` explicitly sources it.
@@ -92,7 +92,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.venvs/voice/bin/python <REPO_DIR>/voice-hotkey.py --daemon
+ExecStart=%h/.venvs/voice/bin/python <REPO_DIR>/hvc --daemon
 Restart=on-failure
 RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse
@@ -129,20 +129,44 @@ exec-once = systemctl --user restart voice-hotkey.service
 
 ## 5) Quick verification
 
+Use `hvc` as the primary command from this repo root.
+
+List available input actions (debug helper):
+
+```bash
+<REPO_DIR>/hvc --list-actions
+<REPO_DIR>/hvc --describe-action command-auto
+```
+
+Run one action locally (without daemon RPC) for debugging:
+
+```bash
+<REPO_DIR>/hvc --input wakeword-status --local
+```
+
+Scan or rescan audio devices if a headset/mic disconnects:
+
+```bash
+<REPO_DIR>/hvc --list-audio
+<REPO_DIR>/hvc --rescan-audio
+# shorthand alias
+<REPO_DIR>/hvc --restart-audio
+```
+
 Manual smoke test (command path):
 
 ```bash
-<REPO_DIR>/voice-hotkey.py --input command-start
+<REPO_DIR>/hvc --input command-start
 sleep 1
-<REPO_DIR>/voice-hotkey.py --input command-stop
+<REPO_DIR>/hvc --input command-stop
 ```
 
 Manual smoke test (dictation path):
 
 ```bash
-<REPO_DIR>/voice-hotkey.py --input dictate-start
+<REPO_DIR>/hvc --input dictate-start
 sleep 1
-<REPO_DIR>/voice-hotkey.py --input dictate-stop
+<REPO_DIR>/hvc --input dictate-stop
 ```
 
 Check logs:
@@ -154,14 +178,14 @@ rg "Voice hotkey end status|Input source|Dictation hold|Paste attempt" ~/.local/
 Optional wake daemon smoke test (requires model file under `~/.config/hypr-voice-controls/wakeword/`):
 
 ```bash
-<REPO_DIR>/voice-hotkey.py --wakeword-daemon
+<REPO_DIR>/hvc --wakeword-daemon
 ```
 
 If you use `examples/systemd/wakeword.service` as-is, wake detection starts enabled (`VOICE_WAKEWORD_ENABLED=true`).
 Disable it at runtime with:
 
 ```bash
-<REPO_DIR>/voice-hotkey.py --input wakeword-disable
+<REPO_DIR>/hvc --input wakeword-disable
 ```
 
 Wakeword triggers are automatically suppressed while manual hold capture is active (`command-start`/`dictate-start`) to prevent overlap.
