@@ -12,19 +12,6 @@ _USER_COMMANDS_MTIME_NS: int | None = None
 MAX_COMMAND_PATTERN_LENGTH = 300
 MAX_NORMALIZED_INPUT_LENGTH = 160
 
-# Optional local fallback commands.
-# Keep this empty by default so spoken commands are JSON-driven.
-LOCAL_COMMANDS: list[CommandSpec] = []
-
-# Example local commands (not active unless copied to LOCAL_COMMANDS):
-# LOCAL_COMMANDS = [
-#     CommandSpec(
-#         r"^open obsidian$",
-#         ["hyprctl", "dispatch", "exec", "uwsm-app -- obsidian"],
-#         "Open Obsidian",
-#     ),
-# ]
-
 
 def _load_user_commands() -> tuple[list[CommandSpec], list[tuple[re.Pattern[str], CommandSpec]]]:
     try:
@@ -128,10 +115,6 @@ def match_command(clean_text: str) -> tuple[list[str] | None, str | None]:
 
     for compiled, command in get_user_compiled_commands():
         if compiled.fullmatch(clean_text):
-            return command.argv, command.label
-
-    for command in LOCAL_COMMANDS:
-        if re.fullmatch(command.pattern, clean_text):
             return command.argv, command.label
 
     return None, None

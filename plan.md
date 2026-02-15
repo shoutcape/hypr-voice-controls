@@ -55,7 +55,6 @@ This document is the execution plan for evolving the current repo into a low-lat
 
 - `voice-hotkey.service` (orchestrator daemon)
 - `whispercpp-asr.service` (long-lived whisper.cpp server)
-- `tts.service` (optional local TTS RPC endpoint)
 - `wakeword.service` (optional openWakeWord daemon)
 
 ## Phased Delivery
@@ -101,7 +100,7 @@ This document is the execution plan for evolving the current repo into a low-lat
 5. Add app resolution using config aliases + desktop entry fallback scan.
 6. Add project resolution using explicit map + fallback resolver hook.
 7. Switch dictation injection to `wtype` primary path.
-8. Add TTS client RPC (`speak`, `stop`) for short confirmations.
+8. Add optional TTS client RPC (`speak`, `stop`) for short confirmations.
 9. Implement barge-in that interrupts TTS only after activation.
 10. Add destructive-action confirmation flow.
 
@@ -149,9 +148,12 @@ This document is the execution plan for evolving the current repo into a low-lat
 - `voice_hotkey/vad.py`
 - `voice_hotkey/asr_whispercpp.py`
 - `voice_hotkey/overlay.py`
+- `voice_hotkey/wakeword.py`
+
+Deferred/planned files (not implemented in current v1 code):
+
 - `voice_hotkey/intent_router.py`
 - `voice_hotkey/tts_client.py`
-- `voice_hotkey/wakeword.py`
 
 ## Modified Files
 

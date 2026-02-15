@@ -25,17 +25,21 @@ def write_private_text(path: Path, content: str) -> None:
                 tmp_path.unlink()
             except OSError as exc:
                 LOGGER.debug("Could not remove temp state file path=%s err=%s", tmp_path, exc)
-    try:
-        os.chmod(path, 0o600)
-    except OSError as exc:
-        LOGGER.debug("Could not chmod state file path=%s err=%s", path, exc)
+
+
+def state_required_substrings(state: dict) -> list[str]:
+    raw = state.get("pid_required_substrings")
+    if isinstance(raw, list):
+        tokens = [token for token in raw if isinstance(token, str) and token.strip()]
+        if tokens:
+            return tokens
+    return ["ffmpeg"]
 
 
 def get_saved_dictation_language() -> str:
+    # v1 is intentionally English-only; keep file access for forward compatibility.
     try:
-        value = LANGUAGE_PATH.read_text(encoding="utf-8").strip().lower()
-        if value == "en":
-            return value
+        LANGUAGE_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
         LOGGER.debug("Language file not found path=%s; defaulting to en", LANGUAGE_PATH)
     except Exception as exc:

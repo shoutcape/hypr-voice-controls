@@ -5,6 +5,7 @@ import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from .audio_stream import FFmpegPCMStream
 from .config import (
@@ -39,6 +40,17 @@ class _EndpointCaptureResult:
     audio_bytes: bytes
     peak_rms: int
     had_preroll_speech: bool
+
+
+class CommandHandler(Protocol):
+    def __call__(
+        self,
+        raw_text: str,
+        *,
+        source: str,
+        language: str | None,
+        language_probability: float | None,
+    ) -> int: ...
 
 
 def _write_wav(path: Path, pcm_data: bytes, sample_rate_hz: int) -> None:
@@ -181,7 +193,7 @@ def _transcribe_and_dispatch(
     language: str,
     source: str,
     stt_mode: str,
-    command_handler,
+    command_handler: CommandHandler,
 ) -> int:
     transcribe_started_at = time.time()
     with tempfile.TemporaryDirectory(prefix="voice-endpoint-") as tmpdir:
@@ -216,7 +228,7 @@ def run_endpointed_command_session(
     *,
     language: str,
     source: str,
-    command_handler,
+    command_handler: CommandHandler,
     max_seconds: int | None = None,
     start_speech_timeout_ms: int | None = None,
     vad_rms_threshold: int | None = None,

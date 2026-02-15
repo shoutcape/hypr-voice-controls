@@ -39,6 +39,34 @@ def _notify_color(body: str) -> str:
     return "rgb(88ccff)"
 
 
+def speak_text(text: str) -> bool:
+    clean = " ".join(text.split()).strip()
+    if not clean:
+        return False
+
+    cmd: list[str] | None = None
+    if has_tool("spd-say"):
+        cmd = ["spd-say", clean]
+    elif has_tool("espeak"):
+        cmd = ["espeak", clean]
+
+    if not cmd:
+        return False
+
+    try:
+        subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except OSError as exc:
+        LOGGER.debug("TTS speak failed cmd=%s err=%s", cmd, exc)
+        return False
+
+
 def _speak_feedback(text: str) -> None:
     if not TTS_ENABLED:
         return
@@ -53,27 +81,10 @@ def _speak_feedback(text: str) -> None:
     if capped == _LAST_TTS_TEXT and now - _LAST_TTS_AT < (TTS_COOLDOWN_MS / 1000.0):
         return
 
-    cmd: list[str] | None = None
-    if has_tool("spd-say"):
-        cmd = ["spd-say", capped]
-    elif has_tool("espeak"):
-        cmd = ["espeak", capped]
-
-    if not cmd:
+    if not speak_text(capped):
         return
-
-    try:
-        subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        _LAST_TTS_AT = now
-        _LAST_TTS_TEXT = capped
-    except Exception as exc:
-        LOGGER.debug("TTS feedback failed cmd=%s err=%s", cmd, exc)
+    _LAST_TTS_AT = now
+    _LAST_TTS_TEXT = capped
 
 
 def notify(title: str, body: str) -> None:

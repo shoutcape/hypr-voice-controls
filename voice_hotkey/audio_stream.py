@@ -43,7 +43,7 @@ class FFmpegPCMStream:
             stderr=subprocess.DEVNULL,
         )
 
-    def read_frame(self) -> bytes:
+    def _read_frame(self) -> bytes:
         if self._proc is None or self._proc.stdout is None:
             return b""
         data = self._proc.stdout.read(self.frame_bytes)
@@ -51,7 +51,7 @@ class FFmpegPCMStream:
 
     def read_frame_with_timeout(self, timeout_ms: int) -> bytes:
         if timeout_ms <= 0:
-            return self.read_frame()
+            return self._read_frame()
         if self._proc is None or self._proc.stdout is None:
             return b""
 
@@ -90,11 +90,13 @@ class FFmpegPCMStream:
         try:
             self._proc.terminate()
             self._proc.wait(timeout=1.5)
-        except Exception:
+        except subprocess.TimeoutExpired:
             try:
                 self._proc.kill()
-            except Exception as exc:
+            except OSError as exc:
                 LOGGER.debug("Could not force-stop ffmpeg stream process: %s", exc)
+        except OSError as exc:
+            LOGGER.debug("Could not stop ffmpeg stream process cleanly: %s", exc)
         finally:
             self._proc = None
 

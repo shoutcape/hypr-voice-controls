@@ -26,7 +26,7 @@ from .config import (
     WAKE_SESSION_STATE_PATH,
 )
 from .logging_utils import LOGGER
-from .state_utils import read_wakeword_enabled_cached
+from .state_utils import read_wakeword_enabled_cached, state_required_substrings
 
 
 _WAKEWORD_ENABLED_CACHE: bool | None = None
@@ -63,15 +63,6 @@ def _wakeword_enabled() -> bool:
     return enabled
 
 
-def _state_required_substrings(state: dict) -> list[str]:
-    raw = state.get("pid_required_substrings")
-    if isinstance(raw, list):
-        tokens = [token for token in raw if isinstance(token, str) and token.strip()]
-        if tokens:
-            return tokens
-    return ["ffmpeg"]
-
-
 def _capture_state_active(state_path, now: float) -> bool:
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -93,7 +84,7 @@ def _capture_state_active(state_path, now: float) -> bool:
     if not pid_alive(pid):
         return False
 
-    required_substrings = _state_required_substrings(state)
+    required_substrings = state_required_substrings(state)
     if not pid_cmdline_contains(pid, required_substrings=required_substrings):
         return False
 
@@ -182,28 +173,14 @@ def _handle_wake_trigger(
     stream: FFmpegPCMStream,
     ring: deque[bytes],
     request_daemon,
-    now: float,
-) -> tuple[int, float, float]:
+) -> int:
     _write_wake_preroll(ring)
     stream.stop()
     try:
         rc = request_daemon("wake-start")
     finally:
         stream.start()
-
-    last_trigger_at = 0.0
-    rearm_until = 0.0
-    if rc == 3:
-        last_trigger_at = now
-        rearm_until = now + (WAKEWORD_NO_SPEECH_REARM_MS / 1000.0)
-        LOGGER.info(
-            "Wakeword trigger resulted in no_speech; rearming after %sms",
-            WAKEWORD_NO_SPEECH_REARM_MS,
-        )
-    elif rc == 0:
-        last_trigger_at = now
-
-    return rc, last_trigger_at, rearm_until
+    return rc
 
 
 def run_wakeword_daemon() -> int:
@@ -290,17 +267,20 @@ def run_wakeword_daemon() -> int:
             LOGGER.info("Wakeword detected name=%s score=%.3f", score_name, score)
             _play_wake_chime()
             streak_by_name[score_name] = 0
-            rc, trigger_last, trigger_rearm = _handle_wake_trigger(
+            rc = _handle_wake_trigger(
                 stream=stream,
                 ring=ring,
                 request_daemon=request_daemon,
-                now=now,
             )
             if rc == 3:
-                last_trigger_at = trigger_last
-                rearm_until = trigger_rearm
+                last_trigger_at = now
+                rearm_until = now + (WAKEWORD_NO_SPEECH_REARM_MS / 1000.0)
+                LOGGER.info(
+                    "Wakeword trigger resulted in no_speech; rearming after %sms",
+                    WAKEWORD_NO_SPEECH_REARM_MS,
+                )
                 continue
             if rc != 0:
                 LOGGER.warning("Wakeword trigger request failed rc=%s", rc)
                 continue
-            last_trigger_at = trigger_last
+            last_trigger_at = now

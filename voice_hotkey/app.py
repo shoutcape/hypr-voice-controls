@@ -31,14 +31,12 @@ from .config import (
     STATE_MAX_AGE_SECONDS,
     WAKE_GREETING_ENABLED,
     WAKE_GREETING_TEXT,
-    WAKE_DICTATE_SESSION_MAX_SECONDS,
     WAKE_INTENT_VAD_END_SILENCE_MS,
     WAKE_SESSION_MAX_SECONDS,
     WAKE_START_SPEECH_TIMEOUT_MS,
     WAKE_VAD_RMS_THRESHOLD,
     WAKE_VAD_MIN_SPEECH_MS,
     WAKE_VAD_END_SILENCE_MS,
-    WAKE_DICTATE_VAD_END_SILENCE_MS,
     VENV_PYTHON,
     DICTATION_INJECTOR,
 )
@@ -46,6 +44,7 @@ from .integrations import (
     inject_text_into_focused_input,
     notify,
     run_command,
+    speak_text,
 )
 from .logging_utils import LOGGER
 from .overlay import show_partial
@@ -53,6 +52,7 @@ from .orchestrator import run_endpointed_command_session
 from .state_utils import (
     get_saved_dictation_language,
     read_wakeword_enabled,
+    state_required_substrings,
     set_wakeword_enabled,
     write_private_text,
 )
@@ -138,15 +138,6 @@ def _is_state_stale(started_at: float | int | None) -> bool:
     return (time.time() - float(started_at)) > STATE_MAX_AGE_SECONDS
 
 
-def _state_required_substrings(state: dict) -> list[str]:
-    raw = state.get("pid_required_substrings")
-    if isinstance(raw, list):
-        tokens = [token for token in raw if isinstance(token, str) and token.strip()]
-        if tokens:
-            return tokens
-    return ["ffmpeg"]
-
-
 def _recv_json_line(sock: socket.socket) -> dict:
     chunks: list[bytes] = []
     total = 0
@@ -171,43 +162,11 @@ def _recv_json_line(sock: socket.socket) -> dict:
     return json.loads(line.decode("utf-8"))
 
 
-def _read_wakeword_enabled() -> bool:
-    return read_wakeword_enabled()
-
-
-def _set_wakeword_enabled(enabled: bool) -> None:
-    set_wakeword_enabled(enabled)
-
-
 def _say_wake_greeting() -> None:
     if not WAKE_GREETING_ENABLED or not WAKE_GREETING_TEXT:
         return
-
-    if shutil.which("spd-say"):
-        try:
-            subprocess.Popen(
-                ["spd-say", WAKE_GREETING_TEXT],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            return
-        except Exception as exc:
-            LOGGER.warning("Wake greeting via spd-say failed: %s", exc)
-
-    if shutil.which("espeak"):
-        try:
-            subprocess.Popen(
-                ["espeak", WAKE_GREETING_TEXT],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            return
-        except Exception as exc:
-            LOGGER.warning("Wake greeting via espeak failed: %s", exc)
+    if not speak_text(WAKE_GREETING_TEXT):
+        LOGGER.warning("Wake greeting skipped: no TTS backend available")
 
 
 def validate_environment() -> bool:
@@ -390,7 +349,7 @@ def _stop_press_hold_session(
     audio_path = Path(state.get("audio_path", ""))
     tmpdir = Path(state.get("tmpdir", ""))
     language = state.get("language", get_saved_dictation_language())
-    required_substrings = _state_required_substrings(state)
+    required_substrings = state_required_substrings(state)
     started_at = state.get("started_at")
 
     notify("Voice", processing_notify)
@@ -468,7 +427,7 @@ def stop_press_hold_dictation() -> int:
         language_probability: float | None,
         selected_language: str,
     ) -> int:
-        selected_dictation_model = dictation_model_name(selected_language)
+        selected_dictation_model = dictation_model_name()
         if not is_model_loaded(selected_dictation_model):
             LOGGER.info("Dictation model not yet cached model=%s", selected_dictation_model)
 
@@ -562,7 +521,7 @@ def run_dictation() -> int:
         return _complete_dictation_output(spoken, source="dictate")
 
 
-def _handle_wake_implicit_intent(
+def _handle_wake_intent(
     raw_text: str,
     *,
     language: str | None,
@@ -570,11 +529,20 @@ def _handle_wake_implicit_intent(
 ) -> int:
     spoken_after_prefix = _strip_wake_prefix(raw_text, preserve_case=True)
     spoken_after_prefix = _strip_leading_wake_mode_keywords(spoken_after_prefix)
+    clean = normalize(spoken_after_prefix)
+    probability = language_probability if language_probability is not None else 0.0
+    LOGGER.info(
+        "Wake intent language=%s probability=%.3f raw=%s normalized=%s mode=length_based",
+        language,
+        probability,
+        _sanitize_transcript(raw_text),
+        _sanitize_transcript(clean),
+    )
     if not spoken_after_prefix:
         LOGGER.info("Wake input empty after stripping leading mode keywords; ignoring")
         return 0
-    normalized_after_prefix = normalize(spoken_after_prefix)
-    word_count = len(normalized_after_prefix.split()) if normalized_after_prefix else 0
+
+    word_count = len(clean.split()) if clean else 0
     if word_count >= WAKE_AUTO_DICTATION_MIN_WORDS:
         LOGGER.info(
             "Wake implicit dictation by length words=%s threshold=%s",
@@ -596,32 +564,6 @@ def _handle_wake_implicit_intent(
     return handle_command_text(
         spoken_after_prefix,
         source="wake_start",
-        language=language,
-        language_probability=language_probability,
-    )
-
-
-def _handle_wake_intent(
-    raw_text: str,
-    *,
-    language: str | None,
-    language_probability: float | None,
-    wake_language: str,
-) -> int:
-    clean = normalize(raw_text)
-    clean = _strip_wake_prefix(clean)
-    clean = _strip_leading_wake_mode_keywords(clean)
-    probability = language_probability if language_probability is not None else 0.0
-    LOGGER.info(
-        "Wake intent language=%s probability=%.3f raw=%s normalized=%s mode=length_based",
-        language,
-        probability,
-        _sanitize_transcript(raw_text),
-        _sanitize_transcript(clean),
-    )
-
-    return _handle_wake_implicit_intent(
-        raw_text,
         language=language,
         language_probability=language_probability,
     )
@@ -704,26 +646,26 @@ def parse_args() -> argparse.Namespace:
 
 def _handle_wakeword_toggle_input(input_mode: str) -> int | None:
     if input_mode == "wakeword-enable":
-        _set_wakeword_enabled(True)
+        set_wakeword_enabled(True)
         notify("Voice", "Wake word enabled")
         LOGGER.info("Voice hotkey end status=ok source=wakeword_enable enabled=true")
         return 0
 
     if input_mode == "wakeword-disable":
-        _set_wakeword_enabled(False)
+        set_wakeword_enabled(False)
         notify("Voice", "Wake word disabled")
         LOGGER.info("Voice hotkey end status=ok source=wakeword_disable enabled=false")
         return 0
 
     if input_mode == "wakeword-toggle":
-        enabled = not _read_wakeword_enabled()
-        _set_wakeword_enabled(enabled)
+        enabled = not read_wakeword_enabled()
+        set_wakeword_enabled(enabled)
         notify("Voice", f"Wake word {'enabled' if enabled else 'disabled'}")
         LOGGER.info("Voice hotkey end status=ok source=wakeword_toggle enabled=%s", enabled)
         return 0
 
     if input_mode == "wakeword-status":
-        enabled = _read_wakeword_enabled()
+        enabled = read_wakeword_enabled()
         notify("Voice", f"Wake word {'enabled' if enabled else 'disabled'}")
         LOGGER.info("Voice hotkey end status=ok source=wakeword_status enabled=%s", enabled)
         return 0
@@ -732,19 +674,18 @@ def _handle_wakeword_toggle_input(input_mode: str) -> int | None:
 
 
 def _run_wake_start() -> int:
-    if not _read_wakeword_enabled():
+    if not read_wakeword_enabled():
         LOGGER.info("Voice hotkey end status=wake_ignored source=wake_start enabled=false")
         return 0
 
     LOGGER.info(
-        "Wake start triggered session_max=%s start_timeout_ms=%s vad_threshold=%s vad_min_speech_ms=%s vad_end_silence_ms=%s intent_end_silence_ms=%s dictate_end_silence_ms=%s",
+        "Wake start triggered session_max=%s start_timeout_ms=%s vad_threshold=%s vad_min_speech_ms=%s vad_end_silence_ms=%s intent_end_silence_ms=%s",
         WAKE_SESSION_MAX_SECONDS,
         WAKE_START_SPEECH_TIMEOUT_MS,
         WAKE_VAD_RMS_THRESHOLD,
         WAKE_VAD_MIN_SPEECH_MS,
         WAKE_VAD_END_SILENCE_MS,
         WAKE_INTENT_VAD_END_SILENCE_MS,
-        WAKE_DICTATE_VAD_END_SILENCE_MS,
     )
     _say_wake_greeting()
     wake_language = get_saved_dictation_language()
@@ -754,7 +695,6 @@ def _run_wake_start() -> int:
             raw_text,
             language=language,
             language_probability=language_probability,
-            wake_language=wake_language,
         )
 
     return run_endpointed_command_session(
@@ -947,8 +887,7 @@ def run_daemon() -> int:
         SOCKET_PATH.unlink(missing_ok=True)
 
     preload_models()
-    startup_language = get_saved_dictation_language()
-    threading.Thread(target=warm_model, args=(dictation_model_name(startup_language),), daemon=True).start()
+    threading.Thread(target=warm_model, args=(dictation_model_name(),), daemon=True).start()
 
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:

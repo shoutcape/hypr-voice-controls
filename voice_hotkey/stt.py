@@ -78,11 +78,11 @@ def compute_type_for_device(device: str) -> str:
     return "int8"
 
 
-def command_model_name(language: str | None = None) -> str:
+def command_model_name() -> str:
     return COMMAND_MODEL_NAME
 
 
-def dictation_model_name(language: str | None = None) -> str:
+def dictation_model_name() -> str:
     return DICTATE_MODEL_NAME
 
 
@@ -146,7 +146,7 @@ def transcribe(audio_path: Path, language: str | None = None, mode: str = "comma
     if ASR_BACKEND == "whispercpp_server":
         return transcribe_with_whisper_server(audio_path=audio_path, language=language)
 
-    model_name = command_model_name(language) if mode == "command" else dictation_model_name(language)
+    model_name = command_model_name() if mode == "command" else dictation_model_name()
     model = get_whisper_model(model_name)
     transcribe_kwargs = {
         "language": language,
