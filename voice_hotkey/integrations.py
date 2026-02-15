@@ -1,11 +1,13 @@
 import subprocess
 import time
 import unicodedata
+import json
 
 from .config import (
     DICTATION_ALLOW_NEWLINES,
     DICTATION_INJECTOR,
     DICTATION_STRICT_TEXT,
+    DICTATION_WTYPE_FORCE_CLIPBOARD_CLASSES,
     LOG_COMMAND_OUTPUT_MAX,
     NOTIFY_TIMEOUT_MS,
     TTS_COOLDOWN_MS,
@@ -122,8 +124,9 @@ def inject_text_into_focused_input(text: str) -> bool:
     raw_stats = _dictation_debug_stats(text)
     safe_text = _sanitize_dictation_text(text)
     safe_stats = _dictation_debug_stats(safe_text)
+    win = _active_window_debug()
     LOGGER.info(
-        "Dictation inject debug raw_len=%s safe_len=%s raw_qmarks=%s safe_qmarks=%s raw_tabs=%s safe_tabs=%s raw_newlines=%s safe_newlines=%s raw_controls=%s safe_controls=%s injector=%s",
+        "Dictation inject debug raw_len=%s safe_len=%s raw_qmarks=%s safe_qmarks=%s raw_tabs=%s safe_tabs=%s raw_newlines=%s safe_newlines=%s raw_controls=%s safe_controls=%s injector=%s win_addr=%s win_class=%s win_title=%s",
         raw_stats["len"],
         safe_stats["len"],
         raw_stats["qmarks"],
@@ -135,12 +138,22 @@ def inject_text_into_focused_input(text: str) -> bool:
         raw_stats["controls"],
         safe_stats["controls"],
         DICTATION_INJECTOR,
+        win.get("address", ""),
+        win.get("class", ""),
+        _truncate(win.get("title", "")),
     )
     if not safe_text:
         LOGGER.warning("Dictation text empty after sanitization; skipping injection")
         return False
 
     if DICTATION_INJECTOR == "wtype":
+        if _should_force_clipboard_for_window(win):
+            LOGGER.info(
+                "Dictation inject forcing clipboard for window class=%s title=%s",
+                win.get("class", ""),
+                _truncate(win.get("title", "")),
+            )
+            return _inject_text_via_clipboard(safe_text)
         if not has_tool("wtype"):
             LOGGER.warning("wtype not found; falling back to wl-copy + hyprctl paste path")
             return _inject_text_via_clipboard(safe_text)
@@ -213,6 +226,31 @@ def _dictation_debug_stats(text: str) -> dict[str, int]:
         "newlines": text.count("\n") + text.count("\r"),
         "controls": controls,
     }
+
+
+def _active_window_debug() -> dict[str, str]:
+    try:
+        proc = subprocess.run(["hyprctl", "activewindow", "-j"], check=False, capture_output=True, text=True, timeout=1)
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return {}
+        payload = json.loads(proc.stdout)
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            "address": str(payload.get("address", "")),
+            "class": str(payload.get("class", "")),
+            "title": str(payload.get("title", "")),
+        }
+    except Exception:
+        return {}
+
+
+def _should_force_clipboard_for_window(win: dict[str, str]) -> bool:
+    window_class = (win.get("class") or "").strip().lower()
+    if not window_class:
+        return False
+    forced = {cls.strip().lower() for cls in DICTATION_WTYPE_FORCE_CLIPBOARD_CLASSES if cls.strip()}
+    return window_class in forced
 
 
 def _inject_text_via_clipboard(text: str) -> bool:
