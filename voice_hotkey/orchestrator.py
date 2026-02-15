@@ -1,3 +1,5 @@
+import json
+import os
 import tempfile
 import time
 import wave
@@ -9,6 +11,7 @@ from .config import (
     AUDIO_SAMPLE_RATE_HZ,
     SESSION_FRAME_MS,
     SESSION_MAX_SECONDS,
+    WAKE_SESSION_STATE_PATH,
     WAKE_PREROLL_MAX_AGE_MS,
     WAKE_PREROLL_PCM_PATH,
     VAD_END_SILENCE_MS,
@@ -17,6 +20,7 @@ from .config import (
 )
 from .integrations import notify
 from .logging_utils import LOGGER
+from .state_utils import write_private_text
 from .stt import transcribe
 from .vad import EndpointVAD
 
@@ -179,6 +183,7 @@ def _transcribe_and_dispatch(
     stt_mode: str,
     command_handler,
 ) -> int:
+    transcribe_started_at = time.time()
     with tempfile.TemporaryDirectory(prefix="voice-endpoint-") as tmpdir:
         audio_path = Path(tmpdir) / "capture.wav"
         _write_wav(audio_path, audio_bytes, AUDIO_SAMPLE_RATE_HZ)
@@ -189,6 +194,15 @@ def _transcribe_and_dispatch(
             LOGGER.exception("Endpointed command transcription failed: %s", exc)
             LOGGER.info("Voice hotkey end status=transcription_failed source=%s", source)
             return 1
+
+    transcribe_elapsed_ms = int((time.time() - transcribe_started_at) * 1000)
+    LOGGER.info(
+        "Endpointed transcription complete source=%s mode=%s duration_ms=%s audio_seconds=%.2f",
+        source,
+        stt_mode,
+        transcribe_elapsed_ms,
+        len(audio_bytes) / float(AUDIO_SAMPLE_RATE_HZ * 2),
+    )
 
     return command_handler(
         text,
@@ -228,19 +242,49 @@ def run_endpointed_command_session(
 
     notify("Voice", prompt_text)
 
-    capture_result = _capture_endpointed_audio(source=source, config=config, vad=vad)
+    wrote_wake_state = False
+    if source == "wake_start":
+        try:
+            state = {
+                "pid": os.getpid(),
+                "pid_required_substrings": ["voice-hotkey.py", "--daemon"],
+                "started_at": time.time(),
+            }
+            write_private_text(WAKE_SESSION_STATE_PATH, json.dumps(state))
+            wrote_wake_state = True
+        except Exception as exc:
+            LOGGER.debug("Could not write wake session state: %s", exc)
 
-    if not vad.has_started and not capture_result.had_preroll_speech:
-        return _handle_no_speech_result(
-            source=source,
-            config=config,
-            peak_rms=capture_result.peak_rms,
+    try:
+        capture_started_at = time.time()
+        capture_result = _capture_endpointed_audio(source=source, config=config, vad=vad)
+        capture_elapsed_ms = int((time.time() - capture_started_at) * 1000)
+        LOGGER.info(
+            "Endpointed capture complete source=%s duration_ms=%s audio_seconds=%.2f speech_started=%s peak_rms=%s",
+            source,
+            capture_elapsed_ms,
+            len(capture_result.audio_bytes) / float(AUDIO_SAMPLE_RATE_HZ * 2),
+            vad.has_started,
+            capture_result.peak_rms,
         )
 
-    return _transcribe_and_dispatch(
-        audio_bytes=capture_result.audio_bytes,
-        language=language,
-        source=source,
-        stt_mode=stt_mode,
-        command_handler=command_handler,
-    )
+        if not vad.has_started and not capture_result.had_preroll_speech:
+            return _handle_no_speech_result(
+                source=source,
+                config=config,
+                peak_rms=capture_result.peak_rms,
+            )
+
+        return _transcribe_and_dispatch(
+            audio_bytes=capture_result.audio_bytes,
+            language=language,
+            source=source,
+            stt_mode=stt_mode,
+            command_handler=command_handler,
+        )
+    finally:
+        if wrote_wake_state:
+            try:
+                WAKE_SESSION_STATE_PATH.unlink(missing_ok=True)
+            except Exception as exc:
+                LOGGER.debug("Could not clear wake session state: %s", exc)

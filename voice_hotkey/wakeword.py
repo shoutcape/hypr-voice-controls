@@ -1,6 +1,9 @@
 import time
 from collections import deque
 import json
+import math
+import shutil
+import subprocess
 
 from .audio import pid_alive, pid_cmdline_contains
 from .audio_stream import FFmpegPCMStream
@@ -17,6 +20,10 @@ from .config import (
     WAKEWORD_PREROLL_MS,
     WAKEWORD_THRESHOLD,
     WAKE_PREROLL_PCM_PATH,
+    WAKE_CHIME_ENABLED,
+    WAKE_CHIME_FILE,
+    WAKE_CHIME_VOLUME,
+    WAKE_SESSION_STATE_PATH,
 )
 from .logging_utils import LOGGER
 from .state_utils import read_wakeword_enabled_cached
@@ -94,7 +101,11 @@ def _capture_state_active(state_path, now: float) -> bool:
 
 
 def _manual_capture_active(now: float) -> bool:
-    return _capture_state_active(DICTATE_STATE_PATH, now) or _capture_state_active(COMMAND_STATE_PATH, now)
+    return (
+        _capture_state_active(DICTATE_STATE_PATH, now)
+        or _capture_state_active(COMMAND_STATE_PATH, now)
+        or _capture_state_active(WAKE_SESSION_STATE_PATH, now)
+    )
 
 
 def _log_active_capture_skip(now: float) -> None:
@@ -118,6 +129,42 @@ def _write_wake_preroll(ring: deque[bytes]) -> None:
         WAKE_PREROLL_PCM_PATH.write_bytes(b"".join(ring))
     except Exception as exc:
         LOGGER.warning("Could not write wake preroll PCM: %s", exc)
+
+
+def _play_wake_chime() -> None:
+    if not WAKE_CHIME_ENABLED:
+        return
+
+    cmd: list[str] | None = None
+
+    volume = max(0.0, min(1.0, WAKE_CHIME_VOLUME))
+
+    if WAKE_CHIME_FILE:
+        if shutil.which("paplay"):
+            pulse_volume = str(max(0, min(65536, int(65536 * volume))))
+            cmd = ["paplay", f"--volume={pulse_volume}", WAKE_CHIME_FILE]
+        elif shutil.which("pw-play"):
+            cmd = ["pw-play", f"--volume={volume:.3f}", WAKE_CHIME_FILE]
+        else:
+            LOGGER.warning("Wake chime file configured but no paplay/pw-play available")
+            return
+    elif shutil.which("canberra-gtk-play"):
+        db = "-60.0" if volume <= 0.0 else f"{max(-60.0, min(0.0, 20.0 * math.log10(volume))):.1f}"
+        cmd = ["canberra-gtk-play", "-i", "bell", "-d", "voice-hotkey", "-V", db]
+
+    if not cmd:
+        return
+
+    try:
+        subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        LOGGER.debug("Wake chime playback failed cmd=%s err=%s", cmd, exc)
 
 
 def _should_trigger_wake(*, now: float, last_trigger_at: float, rearm_until: float) -> bool:
@@ -241,6 +288,7 @@ def run_wakeword_daemon() -> int:
                 continue
 
             LOGGER.info("Wakeword detected name=%s score=%.3f", score_name, score)
+            _play_wake_chime()
             streak_by_name[score_name] = 0
             rc, trigger_last, trigger_rearm = _handle_wake_trigger(
                 stream=stream,
