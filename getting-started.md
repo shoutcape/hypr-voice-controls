@@ -153,6 +153,14 @@ Scan or rescan audio devices if a headset/mic disconnects:
 <REPO_DIR>/hvc --restart-audio
 ```
 
+Reset voice services and clear stale socket/state files:
+
+```bash
+<REPO_DIR>/hvc --reset
+```
+
+If needed, override script lookup with `VOICE_RESET_SCRIPT=/path/to/reset-voice-services.sh`.
+
 Manual smoke test (command path):
 
 ```bash

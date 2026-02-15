@@ -17,7 +17,13 @@ rm -f "$STATE_DIR/voice-hotkey-dictate.json"
 
 systemctl --user daemon-reload
 systemctl --user start voice-hotkey.service
-systemctl --user start wakeword.service
+if systemctl --user cat wakeword.service >/dev/null 2>&1; then
+  systemctl --user start wakeword.service
+else
+  echo "wakeword.service not installed; skipping wakeword restart"
+fi
 
 systemctl --user status voice-hotkey.service --no-pager --lines=8
-systemctl --user status wakeword.service --no-pager --lines=8
+if systemctl --user cat wakeword.service >/dev/null 2>&1; then
+  systemctl --user status wakeword.service --no-pager --lines=8
+fi

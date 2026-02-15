@@ -1,6 +1,7 @@
 import argparse
 import fcntl
 import json
+import os
 import re
 import shutil
 import socket
@@ -190,6 +191,39 @@ def _rescan_audio_devices() -> int:
 
     print("Audio services restarted.")
     return _print_audio_inventory()
+
+
+def _reset_services(entry_script: Path | None) -> int:
+    configured_script = os.environ.get("VOICE_RESET_SCRIPT", "").strip()
+    if configured_script:
+        script_path = Path(configured_script).expanduser()
+        if not script_path.exists():
+            LOGGER.error("Configured reset script not found path=%s", script_path)
+            print(f"Configured reset script not found: {script_path}")
+            print("Set VOICE_RESET_SCRIPT to a valid path or unset it to use default lookup.")
+            return 1
+    else:
+        candidate_paths: list[Path] = []
+        if entry_script is not None:
+            candidate_paths.append(entry_script.parent / "scripts" / "reset-voice-services.sh")
+        candidate_paths.append(Path(__file__).resolve().parent.parent / "scripts" / "reset-voice-services.sh")
+        script_path = next((path for path in candidate_paths if path.exists()), candidate_paths[0])
+
+    if not script_path.exists():
+        LOGGER.error("Reset script not found path=%s", script_path)
+        print(f"Reset script not found: {script_path}")
+        print("Run from the repository checkout or set VOICE_RESET_SCRIPT to the script path.")
+        return 1
+
+    rc, out, err = _run_cli_command([str(script_path)], timeout_seconds=45)
+    if out.strip():
+        print(out.strip())
+    if rc != 0:
+        if err.strip():
+            print(err.strip())
+        LOGGER.error("Service reset failed rc=%s path=%s err=%s", rc, script_path, err.strip())
+        return 1
+    return 0
 
 
 def _sanitize_transcript(value: str) -> str:
@@ -756,6 +790,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Alias for --rescan-audio",
     )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset voice services (set VOICE_RESET_SCRIPT to override script path)",
+    )
     return parser.parse_args()
 
 
@@ -1040,6 +1079,9 @@ def main(entry_script: Path | None = None) -> int:
 
     if args.rescan_audio or args.restart_audio:
         return _rescan_audio_devices()
+
+    if args.reset:
+        return _reset_services(entry_script)
 
     if args.wakeword_daemon:
         from .wakeword import run_wakeword_daemon

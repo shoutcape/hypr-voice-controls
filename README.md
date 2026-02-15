@@ -263,6 +263,14 @@ Scan or rescan audio devices when headset/mic routing changes:
 <REPO_DIR>/hvc --restart-audio
 ```
 
+Reset voice services and clear stale runtime state:
+
+```bash
+<REPO_DIR>/hvc --reset
+```
+
+If your launcher lives outside this repo layout, set `VOICE_RESET_SCRIPT` to an explicit script path.
+
 ```bash
 <REPO_DIR>/hvc --input command-start
 sleep 1
