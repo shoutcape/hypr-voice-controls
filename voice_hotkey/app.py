@@ -277,15 +277,14 @@ def _strip_wake_prefix(text: str, *, preserve_case: bool = False) -> str:
     return spoken
 
 
-def _strip_leading_wake_mode_keywords(text: str) -> str:
-    tokens = text.split()
-    while tokens:
-        keyword = re.sub(r"[^a-z0-9]+", "", tokens[0].lower())
-        if keyword in WAKE_INTENT_DICTATE_KEYWORDS or keyword in WAKE_INTENT_COMMAND_KEYWORDS:
-            tokens.pop(0)
-            continue
-        break
-    return " ".join(tokens).strip()
+def _split_wake_mode_keyword(text: str) -> tuple[str | None, str]:
+    match = re.match(r"^\s*([a-zA-Z0-9]+)(?:[\s,.:;!?-]+(.*))?$", text)
+    if not match:
+        return None, text.strip()
+
+    keyword = re.sub(r"[^a-z0-9]+", "", match.group(1).lower())
+    payload = (match.group(2) or "").strip()
+    return keyword or None, payload
 
 
 def _recv_json_line(sock: socket.socket) -> dict:
@@ -681,19 +680,47 @@ def _handle_wake_intent(
     language_probability: float | None,
 ) -> int:
     spoken_after_prefix = _strip_wake_prefix(raw_text, preserve_case=True)
-    spoken_after_prefix = _strip_leading_wake_mode_keywords(spoken_after_prefix)
     clean = normalize(spoken_after_prefix)
     probability = language_probability if language_probability is not None else 0.0
+    mode = "length_based"
+    keyword, payload = _split_wake_mode_keyword(spoken_after_prefix)
+    explicit_mode: str | None = None
+    if keyword in WAKE_INTENT_COMMAND_KEYWORDS:
+        explicit_mode = "command"
+    elif keyword in WAKE_INTENT_DICTATE_KEYWORDS:
+        explicit_mode = "dictate"
+
+    if explicit_mode is not None:
+        mode = f"explicit_{explicit_mode}"
     LOGGER.info(
-        "Wake intent language=%s probability=%.3f raw=%s normalized=%s mode=length_based",
+        "Wake intent language=%s probability=%.3f raw=%s normalized=%s mode=%s",
         language,
         probability,
         _sanitize_transcript(raw_text),
         _sanitize_transcript(clean),
+        mode,
     )
     if not spoken_after_prefix:
-        LOGGER.info("Wake input empty after stripping leading mode keywords; ignoring")
+        LOGGER.info("Wake input empty after prefix stripping; ignoring")
         return 0
+
+    if explicit_mode == "dictate":
+        LOGGER.info("Wake explicit dictation selected keyword=%s", keyword)
+        return handle_dictation_text(
+            payload,
+            source="wake_dictate_explicit",
+            language=language,
+            language_probability=language_probability,
+        )
+
+    if explicit_mode == "command":
+        LOGGER.info("Wake explicit command selected keyword=%s", keyword)
+        return handle_command_text(
+            payload,
+            source="wake_start",
+            language=language,
+            language_probability=language_probability,
+        )
 
     word_count = len(clean.split()) if clean else 0
     if word_count >= WAKE_AUTO_DICTATION_MIN_WORDS:

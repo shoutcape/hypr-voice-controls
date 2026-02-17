@@ -234,16 +234,15 @@ Disable it at runtime with:
 
 Wakeword triggers are automatically suppressed while manual hold capture is active (`command-start`/`dictate-start`) to prevent overlap.
 
-After wake trigger, say mode intent first:
-
-- `command` -> command mode
-- `dictate`, `dictation`, or `write` -> dictation mode
-- unclear intent falls back to command matching
-
-You can also use inline payload to skip the second capture:
+After wake trigger, explicit leading mode keywords are honored first:
 
 - `command <payload>` (for example: `command volume down`)
 - `dictate <payload>` (for example: `dictate this is a quick note`)
+
+Keyword aliases:
+
+- command: `command`, `commands`
+- dictation: `dictate`, `dictation`, `write`
 
 Without an explicit `command`/`dictate` keyword, wake mode uses a simple word-count heuristic:
 
@@ -291,6 +290,7 @@ Environment=VOICE_STATE_MAX_AGE_SECONDS=900
 Environment=VOICE_WAKE_INTENT_VAD_END_SILENCE_MS=700
 Environment=VOICE_WAKEWORD_FRAME_MS=40
 Environment=VOICE_WAKEWORD_PREROLL_MS=200
+Environment=VOICE_WAKE_DAEMON_RESPONSE_TIMEOUT_SECONDS=12
 ```
 
 After edits:

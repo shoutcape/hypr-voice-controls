@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 from pathlib import Path
 
 from .logging_utils import LOGGER
@@ -9,6 +10,7 @@ USER_COMMANDS_PATH = Path.home() / ".config" / "hypr" / "voice-commands.json"
 _USER_COMMANDS_CACHE: list[CommandSpec] = []
 _USER_COMPILED_CACHE: list[tuple[re.Pattern[str], CommandSpec]] = []
 _USER_COMMANDS_MTIME_NS: int | None = None
+_USER_COMMANDS_LOCK = threading.RLock()
 MAX_COMMAND_PATTERN_LENGTH = 300
 MAX_NORMALIZED_INPUT_LENGTH = 160
 
@@ -74,31 +76,33 @@ def _load_user_commands() -> tuple[list[CommandSpec], list[tuple[re.Pattern[str]
 def get_user_commands() -> list[CommandSpec]:
     global _USER_COMMANDS_CACHE, _USER_COMPILED_CACHE, _USER_COMMANDS_MTIME_NS
 
-    try:
-        stat = USER_COMMANDS_PATH.stat()
-    except FileNotFoundError:
-        if _USER_COMMANDS_MTIME_NS is not None:
-            _USER_COMMANDS_CACHE = []
-            _USER_COMPILED_CACHE = []
-            _USER_COMMANDS_MTIME_NS = None
-            LOGGER.info("User voice commands file removed path=%s", USER_COMMANDS_PATH)
-        return []
-    except Exception as exc:
-        LOGGER.error("Failed to stat user voice commands path=%s err=%s", USER_COMMANDS_PATH, exc)
-        return _USER_COMMANDS_CACHE
+    with _USER_COMMANDS_LOCK:
+        try:
+            stat = USER_COMMANDS_PATH.stat()
+        except FileNotFoundError:
+            if _USER_COMMANDS_MTIME_NS is not None:
+                _USER_COMMANDS_CACHE = []
+                _USER_COMPILED_CACHE = []
+                _USER_COMMANDS_MTIME_NS = None
+                LOGGER.info("User voice commands file removed path=%s", USER_COMMANDS_PATH)
+            return []
+        except Exception as exc:
+            LOGGER.error("Failed to stat user voice commands path=%s err=%s", USER_COMMANDS_PATH, exc)
+            return list(_USER_COMMANDS_CACHE)
 
-    mtime_ns = stat.st_mtime_ns
-    if _USER_COMMANDS_MTIME_NS == mtime_ns:
-        return _USER_COMMANDS_CACHE
+        mtime_ns = stat.st_mtime_ns
+        if _USER_COMMANDS_MTIME_NS == mtime_ns:
+            return list(_USER_COMMANDS_CACHE)
 
-    _USER_COMMANDS_CACHE, _USER_COMPILED_CACHE = _load_user_commands()
-    _USER_COMMANDS_MTIME_NS = mtime_ns
-    return _USER_COMMANDS_CACHE
+        _USER_COMMANDS_CACHE, _USER_COMPILED_CACHE = _load_user_commands()
+        _USER_COMMANDS_MTIME_NS = mtime_ns
+        return list(_USER_COMMANDS_CACHE)
 
 
 def get_user_compiled_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
     get_user_commands()
-    return _USER_COMPILED_CACHE
+    with _USER_COMMANDS_LOCK:
+        return list(_USER_COMPILED_CACHE)
 
 
 def normalize(text: str) -> str:

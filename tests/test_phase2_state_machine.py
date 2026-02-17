@@ -101,6 +101,80 @@ class Phase2StateMachineTests(unittest.TestCase):
         self.assertFalse(result.allowed)
         self.assertEqual(result.reason, "runtime_busy")
 
+    def test_command_start_failed_transitions_only_from_command_hold(self) -> None:
+        machine = RuntimeStateMachine()
+        machine.transition("command-start")
+        result = machine.transition("command-start-failed")
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.next_state, STATE_IDLE)
+
+    def test_command_start_failed_rejected_from_idle(self) -> None:
+        machine = RuntimeStateMachine()
+        result = machine.transition("command-start-failed")
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.reason, "invalid_transition")
+
+    def test_dictate_start_failed_transitions_only_from_dictate_hold(self) -> None:
+        machine = RuntimeStateMachine()
+        machine.transition("dictate-start")
+        result = machine.transition("dictate-start-failed")
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.next_state, STATE_IDLE)
+
+    def test_dictate_start_failed_rejected_from_idle(self) -> None:
+        machine = RuntimeStateMachine()
+        result = machine.transition("dictate-start-failed")
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.reason, "invalid_transition")
+
+    def test_wake_intent_explicit_command_routes_payload_to_command_handler(self) -> None:
+        with patch("voice_hotkey.app.handle_command_text", return_value=17) as mock_handle_command:
+            rc = app._handle_wake_intent(
+                "hey hyper command lock screen",
+                language="en",
+                language_probability=0.91,
+            )
+
+        self.assertEqual(rc, 17)
+        mock_handle_command.assert_called_once_with(
+            "lock screen",
+            source="wake_start",
+            language="en",
+            language_probability=0.91,
+        )
+
+    def test_wake_intent_explicit_dictate_routes_payload_to_dictation_handler(self) -> None:
+        with patch("voice_hotkey.app.handle_dictation_text", return_value=18) as mock_handle_dictation:
+            rc = app._handle_wake_intent(
+                "hey hypr dictate hello from wake mode",
+                language="en",
+                language_probability=0.73,
+            )
+
+        self.assertEqual(rc, 18)
+        mock_handle_dictation.assert_called_once_with(
+            "hello from wake mode",
+            source="wake_dictate_explicit",
+            language="en",
+            language_probability=0.73,
+        )
+
+    def test_wake_intent_without_explicit_keyword_uses_length_heuristic(self) -> None:
+        with patch("voice_hotkey.app.handle_dictation_text", return_value=19) as mock_handle_dictation:
+            rc = app._handle_wake_intent(
+                "hey hyper this should be dictation",
+                language="en",
+                language_probability=0.66,
+            )
+
+        self.assertEqual(rc, 19)
+        mock_handle_dictation.assert_called_once_with(
+            "this should be dictation",
+            source="wake_dictate_implicit",
+            language="en",
+            language_probability=0.66,
+        )
+
     def test_handle_hold_input_routes_command_modes_to_v2_wrappers(self) -> None:
         with patch.object(app, "RUNTIME_V2_ENABLED", True):
             with patch("voice_hotkey.app._run_command_start_v2", return_value=11) as mock_start:

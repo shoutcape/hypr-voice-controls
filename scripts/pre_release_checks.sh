@@ -30,6 +30,7 @@ python3 -m py_compile \
   "$REPO_DIR"/tests/test_phase2_job_queue.py \
   "$REPO_DIR"/tests/test_phase2_orchestrator_cancel.py \
   "$REPO_DIR"/tests/test_phase3_wakeword_responsiveness.py \
+  "$REPO_DIR"/tests/test_phase4_commands_integrations.py \
   "$REPO_DIR"/scripts/phase0_baseline_latency.py \
   "$REPO_DIR"/scripts/runtime_v2_acceptance.py
 
@@ -40,7 +41,8 @@ python3 -m unittest \
   tests/test_phase2_state_machine.py \
   tests/test_phase2_job_queue.py \
   tests/test_phase2_orchestrator_cancel.py \
-  tests/test_phase3_wakeword_responsiveness.py
+  tests/test_phase3_wakeword_responsiveness.py \
+  tests/test_phase4_commands_integrations.py
 
 printf '[3/4] Local runtime health\n'
 "$REPO_DIR"/scripts/runtime-health-check.sh --local

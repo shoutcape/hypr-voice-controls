@@ -132,6 +132,7 @@ export VOICE_WAKEWORD_COOLDOWN_MS=1500
 export VOICE_WAKEWORD_NO_SPEECH_REARM_MS=5000
 export VOICE_WAKEWORD_FRAME_MS=40
 export VOICE_WAKEWORD_PREROLL_MS=200
+export VOICE_WAKE_DAEMON_RESPONSE_TIMEOUT_SECONDS=12
 export VOICE_WAKE_GREETING_ENABLED=true
 export VOICE_WAKE_GREETING_TEXT="hello"
 ```
@@ -160,16 +161,15 @@ Systemd template:
 
 ### Wake mode selection
 
-When wakeword triggers `wake-start`, the daemon now runs a short intent capture first:
-
-- say `command` to run command mode
-- say `dictate`, `dictation`, or `write` for dictation mode
-- if intent is unclear, it falls back to command matching (backward-compatible)
-
-You can also do single-shot wake utterances to skip the follow-up capture:
+When wakeword triggers `wake-start`, explicit leading mode keywords are honored first:
 
 - `command <payload>` (example: `command lock screen`)
 - `dictate <payload>` (example: `dictate hello from wake mode`)
+
+Keyword aliases:
+
+- command: `command`, `commands`
+- dictation: `dictate`, `dictation`, `write`
 
 If you do not say an explicit intent keyword, wake mode uses a length heuristic:
 

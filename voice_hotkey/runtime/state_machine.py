@@ -60,8 +60,13 @@ def _resolve_transition(state: RuntimeState, action: str) -> tuple[bool, Runtime
             return True, STATE_IDLE, None
         return False, state, "invalid_transition"
 
-    if action in {"command-stop-complete", "command-start-failed"}:
-        if state == STATE_TRANSCRIBING or action == "command-start-failed":
+    if action == "command-stop-complete":
+        if state == STATE_TRANSCRIBING:
+            return True, STATE_IDLE, None
+        return False, state, "invalid_transition"
+
+    if action == "command-start-failed":
+        if state == STATE_COMMAND_HOLD:
             return True, STATE_IDLE, None
         return False, state, "invalid_transition"
 
@@ -77,8 +82,13 @@ def _resolve_transition(state: RuntimeState, action: str) -> tuple[bool, Runtime
             return True, STATE_IDLE, None
         return False, state, "invalid_transition"
 
-    if action in {"dictate-stop-complete", "dictate-start-failed"}:
-        if state == STATE_TRANSCRIBING or action == "dictate-start-failed":
+    if action == "dictate-stop-complete":
+        if state == STATE_TRANSCRIBING:
+            return True, STATE_IDLE, None
+        return False, state, "invalid_transition"
+
+    if action == "dictate-start-failed":
+        if state == STATE_DICTATE_HOLD:
             return True, STATE_IDLE, None
         return False, state, "invalid_transition"
 
