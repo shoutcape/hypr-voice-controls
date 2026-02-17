@@ -1,0 +1,6 @@
+[Unit]
+Description=Notify on voice runtime health failure (%i)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env sh -c 'notify-send "Voice Runtime Health" "Health check failed: %i (see journalctl --user -u %i)"'

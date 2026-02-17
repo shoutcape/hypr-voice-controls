@@ -1,5 +1,6 @@
 import argparse
 import fcntl
+import itertools
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+from concurrent.futures import CancelledError
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -27,6 +29,7 @@ from .config import (
     DICTATE_STATE_PATH,
     LOCK_PATH,
     LOG_TRANSCRIPTS,
+    RUNTIME_V2_ENABLED,
     SOCKET_PATH,
     STATE_MAX_AGE_SECONDS,
     WAKE_GREETING_ENABLED,
@@ -48,7 +51,10 @@ from .integrations import (
 )
 from .logging_utils import LOGGER
 from .overlay import show_partial
-from .orchestrator import run_endpointed_command_session
+from .orchestrator import CANCELLED_EXIT_CODE, run_endpointed_command_session
+from .runtime.controller import serve_with_thread_pool
+from .runtime.job_queue import RuntimeJobQueue
+from .runtime.state_machine import RuntimeStateMachine
 from .state_utils import (
     get_saved_dictation_language,
     is_capture_state_active_payload,
@@ -73,6 +79,8 @@ INPUT_MODE_DESCRIPTIONS: dict[str, str] = {
     "wakeword-disable": "Disable wakeword runtime state",
     "wakeword-toggle": "Toggle wakeword runtime state",
     "wakeword-status": "Read wakeword runtime state",
+    "runtime-status": "Read runtime queue/state health snapshot",
+    "runtime-status-json": "Read runtime queue/state snapshot as JSON",
 }
 
 ALLOWED_INPUT_MODES = set(INPUT_MODE_DESCRIPTIONS)
@@ -90,9 +98,27 @@ NON_AUDIO_INPUT_MODES = {
     "wakeword-disable",
     "wakeword-toggle",
     "wakeword-status",
+    "runtime-status",
+    "runtime-status-json",
 }
 
+RUNTIME_V2_QUEUED_INPUT_MODES = {
+    "voice",
+    "dictate",
+    "dictate-stop",
+    "command-stop",
+    "command-auto",
+    "wake-start",
+}
+
+RUNTIME_V2_DIRECT_INPUT_MODES = ALLOWED_INPUT_MODES - RUNTIME_V2_QUEUED_INPUT_MODES
+
 AUDIO_RESCAN_SERVICES = ("wireplumber", "pipewire", "pipewire-pulse")
+RUNTIME_V2_CONNECTION_WORKERS = 4
+RUNTIME_V2_EXECUTION_QUEUE_MAX = 8
+RUNTIME_STATE_MACHINE = RuntimeStateMachine()
+RUNTIME_EXECUTION_QUEUE = RuntimeJobQueue(max_size=RUNTIME_V2_EXECUTION_QUEUE_MAX, logger=LOGGER)
+DAEMON_REQUEST_IDS = itertools.count(1)
 
 LEGACY_INPUT_ALIASES = {
     "text": "dictate",
@@ -131,6 +157,14 @@ def _normalize_input_mode(input_mode: str) -> str:
     if mapped != input_mode:
         LOGGER.info("Normalized legacy input=%s to input=%s", input_mode, mapped)
     return mapped
+
+
+def _resolve_admission_class(input_mode: str) -> str:
+    if not RUNTIME_V2_ENABLED:
+        return "legacy"
+    if input_mode in RUNTIME_V2_QUEUED_INPUT_MODES:
+        return "queued"
+    return "direct"
 
 
 def _run_cli_command(argv: list[str], *, timeout_seconds: int) -> tuple[int, str, str]:
@@ -827,7 +861,7 @@ def _handle_wakeword_toggle_input(input_mode: str) -> int | None:
     return None
 
 
-def _run_wake_start() -> int:
+def _run_wake_start(*, cancel_event: threading.Event | None = None) -> int:
     if not read_wakeword_enabled():
         LOGGER.info("Voice hotkey end status=wake_ignored source=wake_start enabled=false")
         return 0
@@ -861,19 +895,270 @@ def _run_wake_start() -> int:
         vad_min_speech_ms=WAKE_VAD_MIN_SPEECH_MS,
         vad_end_silence_ms=WAKE_INTENT_VAD_END_SILENCE_MS,
         prompt_text="Wake heard, speak now...",
+        cancel_event=cancel_event,
     )
+
+
+def _run_wake_start_v2() -> int:
+    transition = RUNTIME_STATE_MACHINE.transition("wake-start")
+    if not transition.allowed:
+        return _reject_runtime_transition(transition.action, transition.previous_state, transition.reason)
+    _log_runtime_transition(transition.action, transition.previous_state, transition.next_state)
+
+    rc = 1
+    try:
+        rc = _run_v2_queued_call("wake-start", lambda cancel_event: _run_wake_start(cancel_event=cancel_event))
+    finally:
+        action = "wake-complete" if rc == 0 else "wake-failed"
+        completion = RUNTIME_STATE_MACHINE.transition(action)
+        if not completion.allowed:
+            LOGGER.warning(
+                "Runtime transition completion rejected action=%s from=%s reason=%s",
+                completion.action,
+                completion.previous_state,
+                completion.reason,
+            )
+        else:
+            _log_runtime_transition(completion.action, completion.previous_state, completion.next_state)
+    return rc
 
 
 def _handle_hold_input(input_mode: str) -> int | None:
     if input_mode == "dictate-start":
+        if RUNTIME_V2_ENABLED:
+            return _run_dictate_start_v2()
         return start_press_hold_dictation()
     if input_mode == "dictate-stop":
+        if RUNTIME_V2_ENABLED:
+            return _run_dictate_stop_v2()
         return stop_press_hold_dictation()
     if input_mode == "command-start":
+        if RUNTIME_V2_ENABLED:
+            return _run_command_start_v2()
         return start_press_hold_command()
     if input_mode == "command-stop":
+        if RUNTIME_V2_ENABLED:
+            return _run_command_stop_v2()
         return stop_press_hold_command()
     return None
+
+
+def _reject_runtime_transition(action: str, previous_state: str, reason: str | None) -> int:
+    LOGGER.info(
+        "Runtime transition rejected action=%s from=%s reason=%s",
+        action,
+        previous_state,
+        reason,
+    )
+    notify("Voice", "Voice busy")
+    return 1
+
+
+def _log_runtime_transition(action: str, previous_state: str, next_state: str) -> None:
+    LOGGER.info("Runtime transition action=%s from=%s to=%s", action, previous_state, next_state)
+
+
+def _log_runtime_queue_snapshot(context: str) -> None:
+    snapshot_fn = getattr(RUNTIME_EXECUTION_QUEUE, "snapshot", None)
+    if callable(snapshot_fn):
+        snapshot = snapshot_fn()
+        LOGGER.info(
+            "Runtime queue snapshot context=%s pending=%s running_id=%s running_name=%s running_age_ms=%s worker_alive=%s worker_restarts=%s",
+            context,
+            getattr(snapshot, "pending", "unknown"),
+            getattr(snapshot, "running_job_id", "unknown"),
+            getattr(snapshot, "running_job_name", "unknown"),
+            getattr(snapshot, "running_age_ms", "unknown"),
+            getattr(snapshot, "worker_alive", "unknown"),
+            getattr(snapshot, "worker_restarts", "unknown"),
+        )
+        return
+
+    pending_fn = getattr(RUNTIME_EXECUTION_QUEUE, "pending", None)
+    pending = pending_fn() if callable(pending_fn) else "unknown"
+    LOGGER.info(
+        "Runtime queue snapshot context=%s pending=%s running_id=%s running_name=%s running_age_ms=%s",
+        context,
+        pending,
+        "unknown",
+        "unknown",
+        "unknown",
+    )
+
+
+def _runtime_status_text() -> str:
+    payload = _runtime_status_payload()
+    return (
+        "Runtime status: "
+        f"pending={payload['pending']} "
+        f"running={payload['running_job_name']} "
+        f"age_ms={payload['running_age_ms']} "
+        f"worker_alive={payload['worker_alive']} "
+        f"worker_restarts={payload['worker_restarts']}"
+    )
+
+
+def _runtime_status_payload() -> dict[str, object]:
+    runtime_state = RUNTIME_STATE_MACHINE.get_state()
+    snapshot_fn = getattr(RUNTIME_EXECUTION_QUEUE, "snapshot", None)
+    if callable(snapshot_fn):
+        snapshot = snapshot_fn()
+        return {
+            "state": runtime_state,
+            "pending": getattr(snapshot, "pending", "unknown"),
+            "running_job_id": getattr(snapshot, "running_job_id", "unknown"),
+            "running_job_name": getattr(snapshot, "running_job_name", "unknown"),
+            "running_age_ms": getattr(snapshot, "running_age_ms", "unknown"),
+            "worker_alive": getattr(snapshot, "worker_alive", "unknown"),
+            "worker_restarts": getattr(snapshot, "worker_restarts", "unknown"),
+        }
+
+    pending_fn = getattr(RUNTIME_EXECUTION_QUEUE, "pending", None)
+    pending = pending_fn() if callable(pending_fn) else "unknown"
+    return {
+        "state": runtime_state,
+        "pending": pending,
+        "running_job_id": "unknown",
+        "running_job_name": "unknown",
+        "running_age_ms": "unknown",
+        "worker_alive": "unknown",
+        "worker_restarts": "unknown",
+    }
+
+
+def _run_runtime_status(*, notify_user: bool = True) -> int:
+    status_text = _runtime_status_text()
+    if notify_user:
+        notify("Voice", status_text)
+    LOGGER.info("%s state=%s", status_text, _runtime_status_payload()["state"])
+    return 0
+
+
+def _run_v2_queued_call(job_name: str, fn: Callable[[threading.Event], int]) -> int:
+    future = RUNTIME_EXECUTION_QUEUE.submit(job_name, fn)
+    if future is None:
+        LOGGER.warning("Runtime execution queue full job=%s", job_name)
+        _log_runtime_queue_snapshot("queue_full")
+        notify("Voice", "Voice busy")
+        return 1
+
+    try:
+        return int(future.result())
+    except CancelledError:
+        LOGGER.info("Runtime queued job cancelled job=%s", job_name)
+        return CANCELLED_EXIT_CODE
+    except Exception as exc:
+        LOGGER.exception("Runtime queued job failed job=%s: %s", job_name, exc)
+        return 1
+
+
+def _cancel_v2_long_running_jobs(*, source: str) -> bool:
+    cancelled_any = False
+    for job_name in ("command-auto", "wake-start"):
+        if RUNTIME_EXECUTION_QUEUE.cancel_by_name(job_name):
+            cancelled_any = True
+            LOGGER.info("Runtime cancellation requested by %s job=%s", source, job_name)
+    if cancelled_any:
+        _log_runtime_queue_snapshot(f"cancel_requested:{source}")
+    return cancelled_any
+
+
+def _run_command_auto_v2() -> int:
+    return _run_v2_queued_call(
+        "command-auto",
+        lambda cancel_event: run_endpointed_command_session(
+            language=get_saved_dictation_language(),
+            source="command_auto",
+            command_handler=handle_command_text,
+            cancel_event=cancel_event,
+        ),
+    )
+
+
+def _run_dictate_v2() -> int:
+    return _run_v2_queued_call("dictate", lambda _cancel_event: run_dictation())
+
+
+def _run_voice_capture_v2() -> int:
+    return _run_v2_queued_call("voice", lambda _cancel_event: _run_voice_command_capture())
+
+
+def _run_dictate_start_v2() -> int:
+    transition = RUNTIME_STATE_MACHINE.transition("dictate-start")
+    if not transition.allowed:
+        return _reject_runtime_transition(transition.action, transition.previous_state, transition.reason)
+    _log_runtime_transition(transition.action, transition.previous_state, transition.next_state)
+
+    rc = start_press_hold_dictation()
+    if rc != 0:
+        RUNTIME_STATE_MACHINE.transition("dictate-start-failed")
+    return rc
+
+
+def _run_dictate_stop_v2() -> int:
+    cancelled_any = _cancel_v2_long_running_jobs(source="dictate-stop")
+    if cancelled_any and not DICTATE_STATE_PATH.exists():
+        return 0
+
+    transition = RUNTIME_STATE_MACHINE.transition("dictate-stop")
+    if not transition.allowed:
+        return _reject_runtime_transition(transition.action, transition.previous_state, transition.reason)
+    _log_runtime_transition(transition.action, transition.previous_state, transition.next_state)
+
+    rc = 1
+    try:
+        rc = _run_v2_queued_call("dictate-stop", lambda _cancel_event: stop_press_hold_dictation())
+    finally:
+        completion = RUNTIME_STATE_MACHINE.transition("dictate-stop-complete")
+        if not completion.allowed:
+            LOGGER.warning(
+                "Runtime transition completion rejected action=%s from=%s reason=%s",
+                completion.action,
+                completion.previous_state,
+                completion.reason,
+            )
+        else:
+            _log_runtime_transition(completion.action, completion.previous_state, completion.next_state)
+    return rc
+
+
+def _run_command_start_v2() -> int:
+    transition = RUNTIME_STATE_MACHINE.transition("command-start")
+    if not transition.allowed:
+        return _reject_runtime_transition(transition.action, transition.previous_state, transition.reason)
+    _log_runtime_transition(transition.action, transition.previous_state, transition.next_state)
+
+    rc = start_press_hold_command()
+    if rc != 0:
+        RUNTIME_STATE_MACHINE.transition("command-start-failed")
+    return rc
+
+
+def _run_command_stop_v2() -> int:
+    cancelled_any = _cancel_v2_long_running_jobs(source="command-stop")
+    if cancelled_any and not COMMAND_STATE_PATH.exists():
+        return 0
+
+    transition = RUNTIME_STATE_MACHINE.transition("command-stop")
+    if not transition.allowed:
+        return _reject_runtime_transition(transition.action, transition.previous_state, transition.reason)
+    _log_runtime_transition(transition.action, transition.previous_state, transition.next_state)
+
+    rc = 1
+    try:
+        rc = _run_v2_queued_call("command-stop", lambda _cancel_event: stop_press_hold_command())
+    finally:
+        completion = RUNTIME_STATE_MACHINE.transition("command-stop-complete")
+        if not completion.allowed:
+            LOGGER.warning(
+                "Runtime transition completion rejected action=%s from=%s reason=%s",
+                completion.action,
+                completion.previous_state,
+                completion.reason,
+            )
+        else:
+            _log_runtime_transition(completion.action, completion.previous_state, completion.next_state)
+    return rc
 
 
 def _run_voice_command_capture() -> int:
@@ -913,10 +1198,20 @@ def handle_input(input_mode: str) -> int:
     if wakeword_result is not None:
         return wakeword_result
 
+    if input_mode == "runtime-status":
+        return _run_runtime_status()
+
+    if input_mode == "runtime-status-json":
+        return _run_runtime_status(notify_user=False)
+
     if input_mode == "wake-start":
+        if RUNTIME_V2_ENABLED:
+            return _run_wake_start_v2()
         return _run_wake_start()
 
     if input_mode == "command-auto":
+        if RUNTIME_V2_ENABLED:
+            return _run_command_auto_v2()
         return run_endpointed_command_session(
             language=get_saved_dictation_language(),
             source="command_auto",
@@ -930,7 +1225,12 @@ def handle_input(input_mode: str) -> int:
     LOGGER.info("Voice hotkey trigger start input=%s", input_mode)
 
     if input_mode == "dictate":
+        if RUNTIME_V2_ENABLED:
+            return _run_dictate_v2()
         return run_dictation()
+
+    if RUNTIME_V2_ENABLED:
+        return _run_voice_capture_v2()
 
     return _run_voice_command_capture()
 
@@ -953,35 +1253,74 @@ def start_daemon(entry_script: Path | None = None) -> None:
         LOGGER.error("Could not start daemon process: %s", exc)
 
 
-def request_daemon(input_mode: str, *, auto_start: bool = True, entry_script: Path | None = None) -> int:
-    payload = json.dumps({"input": input_mode}).encode("utf-8") + b"\n"
+def request_daemon(
+    input_mode: str,
+    *,
+    auto_start: bool = True,
+    entry_script: Path | None = None,
+    connect_timeout: float | None = None,
+    response_timeout: float | None = None,
+    retries: int | None = None,
+    start_delay: float | None = None,
+) -> int:
+    response = request_daemon_response(
+        input_mode,
+        auto_start=auto_start,
+        entry_script=entry_script,
+        connect_timeout=connect_timeout,
+        response_timeout=response_timeout,
+        retries=retries,
+        start_delay=start_delay,
+    )
+    rc_value = response.get("rc", 1)
+    if isinstance(rc_value, (int, float, str)):
+        return int(rc_value)
+    return 1
 
-    for attempt in range(DAEMON_START_RETRIES):
+
+def request_daemon_response(
+    input_mode: str,
+    *,
+    auto_start: bool = True,
+    entry_script: Path | None = None,
+    connect_timeout: float | None = None,
+    response_timeout: float | None = None,
+    retries: int | None = None,
+    start_delay: float | None = None,
+) -> dict[str, object]:
+    payload = json.dumps({"input": input_mode}).encode("utf-8") + b"\n"
+    active_connect_timeout = DAEMON_CONNECT_TIMEOUT if connect_timeout is None else max(0.01, connect_timeout)
+    active_response_timeout = DAEMON_RESPONSE_TIMEOUT if response_timeout is None else max(0.01, response_timeout)
+    active_retries = DAEMON_START_RETRIES if retries is None else max(1, retries)
+    active_start_delay = DAEMON_START_DELAY if start_delay is None else max(0.0, start_delay)
+
+    for attempt in range(active_retries):
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(DAEMON_CONNECT_TIMEOUT)
+                client.settimeout(active_connect_timeout)
                 client.connect(str(SOCKET_PATH))
-                client.settimeout(DAEMON_RESPONSE_TIMEOUT)
+                client.settimeout(active_response_timeout)
                 client.sendall(payload)
                 data = _recv_json_line(client)
-            rc = int(data.get("rc", 1))
+            rc_raw = data.get("rc", 1)
+            rc = int(rc_raw) if isinstance(rc_raw, (int, float, str)) else 1
             if rc == 2 and input_mode in WAKEWORD_INPUT_MODES:
                 LOGGER.warning(
                     "Daemon rejected input=%s with rc=2; daemon may be stale and need restart",
                     input_mode,
                 )
                 notify("Voice", "Voice daemon is stale, restart service")
-            return rc
+            return data
         except (FileNotFoundError, ConnectionRefusedError, socket.timeout, json.JSONDecodeError, ValueError, OSError):
             if not auto_start:
-                return 1
+                return {"rc": 1}
             if attempt == 0:
                 start_daemon(entry_script=entry_script)
-            time.sleep(DAEMON_START_DELAY)
+            time.sleep(active_start_delay)
 
     LOGGER.error("Could not reach voice-hotkey daemon after retries")
     notify("Voice", "Voice daemon unavailable")
-    return 1
+    return {"rc": 1}
 
 
 def _parse_daemon_request(conn: socket.socket) -> dict | None:
@@ -994,21 +1333,57 @@ def _parse_daemon_request(conn: socket.socket) -> dict | None:
 
 
 def _execute_daemon_request(request: dict) -> int:
+    request_id = next(DAEMON_REQUEST_IDS)
+    started_at = time.time()
     input_mode = _normalize_input_mode(request.get("input", "voice"))
+    admission_class = _resolve_admission_class(input_mode)
     if input_mode not in ALLOWED_INPUT_MODES:
-        LOGGER.warning("Rejected invalid daemon input=%r", input_mode)
+        LOGGER.warning(
+            "Rejected invalid daemon input=%r request_id=%s admission=%s",
+            input_mode,
+            request_id,
+            admission_class,
+        )
         return 2
 
+    LOGGER.info(
+        "Voice daemon request start id=%s input=%s admission=%s",
+        request_id,
+        input_mode,
+        admission_class,
+    )
+
     try:
-        return handle_input(input_mode)
+        rc = handle_input(input_mode)
     except Exception as exc:
-        LOGGER.exception("Voice daemon request handler failed input=%s: %s", input_mode, exc)
+        elapsed_ms = int((time.time() - started_at) * 1000)
+        LOGGER.exception(
+            "Voice daemon request failed id=%s input=%s duration_ms=%s: %s",
+            request_id,
+            input_mode,
+            elapsed_ms,
+            exc,
+        )
         return 1
 
+    elapsed_ms = int((time.time() - started_at) * 1000)
+    LOGGER.info(
+        "Voice daemon request end id=%s input=%s admission=%s rc=%s duration_ms=%s",
+        request_id,
+        input_mode,
+        admission_class,
+        rc,
+        elapsed_ms,
+    )
+    return rc
 
-def _send_daemon_response(conn: socket.socket, rc: int) -> None:
+
+def _send_daemon_response(conn: socket.socket, rc: int, extra: dict[str, object] | None = None) -> None:
     try:
-        conn.sendall((json.dumps({"rc": rc}) + "\n").encode("utf-8"))
+        payload: dict[str, object] = {"rc": rc}
+        if extra:
+            payload.update(extra)
+        conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
     except OSError as exc:
         LOGGER.debug("Voice daemon response send failed rc=%s err=%s", rc, exc)
 
@@ -1021,6 +1396,10 @@ def _handle_daemon_connection(conn: socket.socket) -> None:
             return
 
         rc = _execute_daemon_request(request)
+        input_mode = _normalize_input_mode(str(request.get("input", "voice")))
+        if input_mode == "runtime-status-json" and rc == 0:
+            _send_daemon_response(conn, rc, extra={"status": _runtime_status_payload()})
+            return
         _send_daemon_response(conn, rc)
 
 
@@ -1041,6 +1420,9 @@ def run_daemon() -> int:
     if SOCKET_PATH.exists():
         SOCKET_PATH.unlink(missing_ok=True)
 
+    runtime_mode = "v2" if RUNTIME_V2_ENABLED else "v1"
+    LOGGER.info("Voice hotkey runtime mode=%s", runtime_mode)
+
     preload_models()
     threading.Thread(target=warm_model, args=(dictation_model_name(),), daemon=True).start()
 
@@ -1054,11 +1436,25 @@ def run_daemon() -> int:
             server.listen(8)
             LOGGER.info("Voice hotkey daemon listening socket=%s", SOCKET_PATH)
 
-            while True:
-                conn, _ = server.accept()
-                _handle_daemon_connection(conn)
+            if RUNTIME_V2_ENABLED:
+                server.settimeout(1.0)
+                LOGGER.info(
+                    "Voice hotkey v2 control plane enabled max_connection_workers=%s",
+                    RUNTIME_V2_CONNECTION_WORKERS,
+                )
+                serve_with_thread_pool(
+                    server,
+                    _handle_daemon_connection,
+                    logger=LOGGER,
+                    max_workers=RUNTIME_V2_CONNECTION_WORKERS,
+                )
+            else:
+                while True:
+                    conn, _ = server.accept()
+                    _handle_daemon_connection(conn)
     finally:
         lock_handle.close()
+    return 0
 
 
 def main(entry_script: Path | None = None) -> int:
@@ -1092,6 +1488,9 @@ def main(entry_script: Path | None = None) -> int:
         return run_daemon()
 
     if args.local:
+        if input_mode == "runtime-status-json":
+            print(json.dumps(_runtime_status_payload(), sort_keys=True))
+            return _run_runtime_status(notify_user=False)
         if input_mode not in NON_AUDIO_INPUT_MODES and not validate_environment():
             return 1
         try:
@@ -1099,5 +1498,11 @@ def main(entry_script: Path | None = None) -> int:
         except Exception as exc:
             LOGGER.exception("Local request handler failed input=%s: %s", input_mode, exc)
             return 1
+
+    if input_mode == "runtime-status-json":
+        response = request_daemon_response(input_mode, entry_script=entry_script)
+        print(json.dumps(response.get("status", {}), sort_keys=True))
+        rc_raw = response.get("rc", 1)
+        return int(rc_raw) if isinstance(rc_raw, (int, float, str)) else 1
 
     return request_daemon(input_mode, entry_script=entry_script)

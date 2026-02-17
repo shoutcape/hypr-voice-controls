@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Syntax checks
+        run: |
+          python3 -m py_compile \
+            voice-hotkey.py \
+            voice_hotkey/*.py \
+            voice_hotkey/runtime/*.py \
+            scripts/phase0_baseline_latency.py \
+            scripts/runtime_v2_acceptance.py
+
+      - name: Unit tests
+        run: |
+          python3 -m unittest \
+            tests/test_phase0_guardrails.py \
+            tests/test_phase1_control_plane.py \
+            tests/test_phase2_state_machine.py \
+            tests/test_phase2_job_queue.py \
+            tests/test_phase2_orchestrator_cancel.py \
+            tests/test_phase3_wakeword_responsiveness.py

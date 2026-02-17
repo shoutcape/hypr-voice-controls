@@ -9,6 +9,14 @@ This guide sets up Hypr Voice Controls from scratch with the current architectur
 - Hold duration is controlled by key release (no fixed max hold timeout).
 - A user-level daemon managed by systemd for reliable startup.
 
+## CI parity
+
+Before pushing changes, run the same local pre-release gate used by CI:
+
+```bash
+<REPO_DIR>/scripts/pre_release_checks.sh
+```
+
 ## 1) Install dependencies
 
 On Arch/Omarchy:
@@ -40,6 +48,9 @@ Template files are available under:
 - `examples/hypr/voice-hotkey.bindings.conf`
 - `examples/systemd/voice-hotkey.service`
 - `examples/systemd/wakeword.service` (optional)
+- `examples/systemd/voice-runtime-health.service` (optional)
+- `examples/systemd/voice-runtime-health.timer` (optional)
+- `examples/systemd/voice-runtime-health-notify@.service` (optional)
 - `examples/hypr/voice-hotkey.autostart.conf`
 - `examples/hypr/voice-commands.json`
 
@@ -99,6 +110,7 @@ Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
 Environment=VOICE_COMMAND_MODEL=large-v3-turbo
 Environment=VOICE_DICTATE_MODEL=large-v3-turbo
+Environment=VOICE_RUNTIME_V2=false
 
 [Install]
 WantedBy=default.target
@@ -111,6 +123,39 @@ systemctl --user daemon-reload
 systemctl --user enable --now voice-hotkey.service
 systemctl --user status voice-hotkey.service --no-pager
 ```
+
+Optional: add a periodic runtime health timer (every 2 minutes):
+
+```bash
+cp <REPO_DIR>/examples/systemd/voice-runtime-health.service ~/.config/systemd/user/
+cp <REPO_DIR>/examples/systemd/voice-runtime-health.timer ~/.config/systemd/user/
+cp <REPO_DIR>/examples/systemd/voice-runtime-health-notify@.service ~/.config/systemd/user/
+# replace <REPO_DIR> inside ~/.config/systemd/user/voice-runtime-health.service
+systemctl --user daemon-reload
+systemctl --user enable --now voice-runtime-health.timer
+systemctl --user list-timers --all | rg voice-runtime-health
+```
+
+When a health check fails, systemd runs `voice-runtime-health-notify@.service` and shows a desktop notification.
+
+Run the health check on demand:
+
+```bash
+systemctl --user start voice-runtime-health.service
+journalctl --user -u voice-runtime-health.service -n 50 --no-pager
+```
+
+Safe failure test (verify health check + notification path):
+
+```bash
+# expected to fail because pending is always >= 0
+<REPO_DIR>/scripts/runtime-health-check.sh --local --max-pending -1 || true
+
+# manual notify template test
+systemctl --user start "voice-runtime-health-notify@voice-runtime-health.service"
+```
+
+For expanded health-check operations and examples, see `README.md`.
 
 Sync current Wayland session vars into user systemd (recommended):
 
@@ -142,6 +187,13 @@ Run one action locally (without daemon RPC) for debugging:
 
 ```bash
 <REPO_DIR>/hvc --input wakeword-status --local
+<REPO_DIR>/hvc --input runtime-status-json --local
+```
+
+Run daemon-mode runtime-v2 acceptance checks (shared queue path):
+
+```bash
+<REPO_DIR>/scripts/runtime_v2_acceptance.py
 ```
 
 Scan or rescan audio devices if a headset/mic disconnects:
@@ -160,22 +212,6 @@ Reset voice services and clear stale socket/state files:
 ```
 
 If needed, override script lookup with `VOICE_RESET_SCRIPT=/path/to/reset-voice-services.sh`.
-
-Manual smoke test (command path):
-
-```bash
-<REPO_DIR>/hvc --input command-start
-sleep 1
-<REPO_DIR>/hvc --input command-stop
-```
-
-Manual smoke test (dictation path):
-
-```bash
-<REPO_DIR>/hvc --input dictate-start
-sleep 1
-<REPO_DIR>/hvc --input dictate-stop
-```
 
 Check logs:
 
@@ -242,6 +278,7 @@ Environment=VOICE_COMMAND_MODEL=large-v3-turbo
 Environment=VOICE_DICTATE_MODEL=large-v3-turbo
 Environment=VOICE_DEVICE=cuda,cpu
 Environment=VOICE_COMPUTE_TYPE=float16
+Environment=VOICE_RUNTIME_V2=false
 Environment=VOICE_DAEMON_START_DELAY=0.05
 Environment=VOICE_DAEMON_MAX_REQUEST_BYTES=8192
 Environment=VOICE_LOG_TRANSCRIPTS=false

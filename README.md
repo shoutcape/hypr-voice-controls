@@ -1,5 +1,7 @@
 # Hypr Voice Controls
 
+[![CI](https://github.com/shoutcape/hypr-voice-controls/actions/workflows/ci.yml/badge.svg)](https://github.com/shoutcape/hypr-voice-controls/actions/workflows/ci.yml)
+
 Voice hotkey daemon for Hyprland with two paths:
 
 - hold-to-command: transcribe speech and execute a configured desktop action
@@ -10,12 +12,24 @@ This repo is the canonical source. Hyprland binds and the user service should po
 
 Primary CLI command is `hvc`. The legacy `voice-hotkey.py` entrypoint remains for compatibility.
 
+## CI status
+
+- GitHub Actions workflow: `ci.yml`
+- Run the same local gate before pushing:
+
+```bash
+<REPO_DIR>/scripts/pre_release_checks.sh
+```
+
 ## Config templates
 
 Use repo examples instead of committing personal desktop config:
 
 - `examples/hypr/voice-hotkey.bindings.conf`
 - `examples/systemd/voice-hotkey.service`
+- `examples/systemd/voice-runtime-health.service` (optional)
+- `examples/systemd/voice-runtime-health.timer` (optional)
+- `examples/systemd/voice-runtime-health-notify@.service` (optional)
 - `examples/hypr/voice-hotkey.autostart.conf`
 - `examples/hypr/voice-commands.json`
 
@@ -100,6 +114,7 @@ export VOICE_VAD_MIN_SPEECH_MS=120
 export VOICE_VAD_END_SILENCE_MS=800
 export VOICE_DICTATION_INJECTOR=wtype
 export VOICE_OVERLAY_ENABLED=true
+export VOICE_RUNTIME_V2=false
 export VOICE_DAEMON_MAX_REQUEST_BYTES=8192
 export VOICE_LOG_TRANSCRIPTS=false
 export VOICE_LOG_COMMAND_OUTPUT_MAX=300
@@ -124,6 +139,7 @@ export VOICE_WAKE_GREETING_TEXT="hello"
 Recommended quality-focused setup:
 
 - use `large-v3-turbo` for both command and dictation models
+- keep `VOICE_RUNTIME_V2=false` until the runtime-v2 refactor is fully rolled out
 
 ## Wakeword daemon (optional)
 
@@ -223,6 +239,37 @@ systemctl --user restart voice-hotkey.service
 systemctl --user status voice-hotkey.service --no-pager
 ```
 
+Optional runtime health timer (checks queue/worker health every 2 minutes):
+
+```bash
+cp <REPO_DIR>/examples/systemd/voice-runtime-health.service ~/.config/systemd/user/
+cp <REPO_DIR>/examples/systemd/voice-runtime-health.timer ~/.config/systemd/user/
+cp <REPO_DIR>/examples/systemd/voice-runtime-health-notify@.service ~/.config/systemd/user/
+# replace <REPO_DIR> inside the copied service file
+systemctl --user daemon-reload
+systemctl --user enable --now voice-runtime-health.timer
+systemctl --user list-timers --all | rg voice-runtime-health
+```
+
+The health service triggers a desktop notification on failure via `OnFailure=voice-runtime-health-notify@%n.service`.
+
+Run on demand:
+
+```bash
+systemctl --user start voice-runtime-health.service
+journalctl --user -u voice-runtime-health.service -n 50 --no-pager
+```
+
+Safe failure test (verify health check + notification path):
+
+```bash
+# expected to fail because pending is always >= 0
+<REPO_DIR>/scripts/runtime-health-check.sh --local --max-pending -1 || true
+
+# manual notify template test
+systemctl --user start "voice-runtime-health-notify@voice-runtime-health.service"
+```
+
 Wayland env sync (recommended for reboot/login reliability):
 
 ```bash
@@ -252,6 +299,13 @@ Run an action locally (without daemon RPC) for debugging:
 
 ```bash
 <REPO_DIR>/hvc --input wakeword-status --local
+<REPO_DIR>/hvc --input runtime-status-json --local
+```
+
+Run daemon-mode runtime-v2 acceptance checks (shared queue path):
+
+```bash
+<REPO_DIR>/scripts/runtime_v2_acceptance.py
 ```
 
 Scan or rescan audio devices when headset/mic routing changes:
@@ -312,3 +366,13 @@ systemctl --user restart voice-hotkey.service
 ```bash
 python3 -m py_compile hvc voice-hotkey.py voice_hotkey/*.py
 ```
+
+- run the full pre-release gate locally:
+
+```bash
+<REPO_DIR>/scripts/pre_release_checks.sh
+# optional: skip daemon acceptance on constrained environments
+<REPO_DIR>/scripts/pre_release_checks.sh --skip-acceptance
+```
+
+- CI runs syntax checks + unit tests via `.github/workflows/ci.yml`.

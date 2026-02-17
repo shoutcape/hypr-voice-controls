@@ -93,6 +93,7 @@ DICTATION_WTYPE_FORCE_CLIPBOARD_CLASSES = [
     item.strip() for item in os.environ.get("VOICE_DICTATION_WTYPE_FORCE_CLIPBOARD_CLASSES", "com.mitchellh.ghostty").split(",") if item.strip()
 ]
 OVERLAY_ENABLED = env_bool("VOICE_OVERLAY_ENABLED", True)
+RUNTIME_V2_ENABLED = env_bool("VOICE_RUNTIME_V2", False)
 WAKEWORD_ENABLED_DEFAULT = env_bool("VOICE_WAKEWORD_ENABLED", True)
 WAKEWORD_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-wakeword.json"
 WAKEWORD_MODEL_DIR = Path(os.path.expanduser(os.environ.get("VOICE_WAKEWORD_MODEL_PATH", "~/.config/hypr-voice-controls/wakeword/")))

@@ -23,13 +23,18 @@ from .config import (
     WAKE_SESSION_STATE_PATH,
 )
 from .logging_utils import LOGGER
-from .orchestrator import NO_SPEECH_EXIT_CODE
+from .orchestrator import CANCELLED_EXIT_CODE, NO_SPEECH_EXIT_CODE
 from .state_utils import is_capture_state_active, read_wakeword_enabled_cached
 
 
 _WAKEWORD_ENABLED_CACHE: bool | None = None
 _WAKEWORD_ENABLED_MTIME_NS: int | None = None
 _LAST_ACTIVE_CAPTURE_LOG_AT = 0.0
+_WAKE_TRIGGER_OUTCOME_COUNTS: dict[str, int] = {}
+WAKE_DAEMON_CONNECT_TIMEOUT_SECONDS = 0.2
+WAKE_DAEMON_RESPONSE_TIMEOUT_SECONDS = 8.0
+WAKE_DAEMON_RETRIES = 1
+WAKEWORD_ERROR_REARM_MS = 1200
 
 
 def _resolve_model_paths() -> list[str]:
@@ -147,10 +152,72 @@ def _handle_wake_trigger(
     _write_wake_preroll(ring)
     stream.stop()
     try:
-        rc = request_daemon("wake-start")
+        rc = request_daemon(
+            "wake-start",
+            auto_start=False,
+            connect_timeout=WAKE_DAEMON_CONNECT_TIMEOUT_SECONDS,
+            response_timeout=WAKE_DAEMON_RESPONSE_TIMEOUT_SECONDS,
+            retries=WAKE_DAEMON_RETRIES,
+        )
     finally:
         stream.start()
     return rc
+
+
+def _apply_wake_trigger_result(*, now: float, rc: int, last_trigger_at: float, rearm_until: float) -> tuple[float, float]:
+    reason = _classify_wake_trigger_result(rc)
+
+    if rc == NO_SPEECH_EXIT_CODE:
+        last_trigger_at = now
+        rearm_until = now + (WAKEWORD_NO_SPEECH_REARM_MS / 1000.0)
+        _record_wake_trigger_outcome(reason=reason, rc=rc, rearm_ms=WAKEWORD_NO_SPEECH_REARM_MS)
+        LOGGER.info(
+            "Wakeword trigger resulted in no_speech; rearming after %sms",
+            WAKEWORD_NO_SPEECH_REARM_MS,
+        )
+        return last_trigger_at, rearm_until
+
+    if rc == CANCELLED_EXIT_CODE:
+        rearm_until = now + (WAKEWORD_ERROR_REARM_MS / 1000.0)
+        _record_wake_trigger_outcome(reason=reason, rc=rc, rearm_ms=WAKEWORD_ERROR_REARM_MS)
+        LOGGER.info("Wakeword trigger cancelled; rearming after %sms", WAKEWORD_ERROR_REARM_MS)
+        return last_trigger_at, rearm_until
+
+    if rc != 0:
+        rearm_until = now + (WAKEWORD_ERROR_REARM_MS / 1000.0)
+        _record_wake_trigger_outcome(reason=reason, rc=rc, rearm_ms=WAKEWORD_ERROR_REARM_MS)
+        LOGGER.warning("Wakeword trigger request failed rc=%s rearm_ms=%s", rc, WAKEWORD_ERROR_REARM_MS)
+        return last_trigger_at, rearm_until
+
+    last_trigger_at = now
+    _record_wake_trigger_outcome(reason=reason, rc=rc, rearm_ms=0)
+    return last_trigger_at, rearm_until
+
+
+def _classify_wake_trigger_result(rc: int) -> str:
+    if rc == 0:
+        return "ok"
+    if rc == NO_SPEECH_EXIT_CODE:
+        return "no_speech"
+    if rc == CANCELLED_EXIT_CODE:
+        return "cancelled"
+    if rc == 2:
+        return "stale_daemon"
+    if rc == 1:
+        return "busy_or_error"
+    return f"rc_{rc}"
+
+
+def _record_wake_trigger_outcome(*, reason: str, rc: int, rearm_ms: int) -> None:
+    count = _WAKE_TRIGGER_OUTCOME_COUNTS.get(reason, 0) + 1
+    _WAKE_TRIGGER_OUTCOME_COUNTS[reason] = count
+    LOGGER.info(
+        "Wakeword trigger outcome reason=%s rc=%s rearm_ms=%s count=%s",
+        reason,
+        rc,
+        rearm_ms,
+        count,
+    )
 
 
 def run_wakeword_daemon() -> int:
@@ -242,15 +309,9 @@ def run_wakeword_daemon() -> int:
                 ring=ring,
                 request_daemon=request_daemon,
             )
-            if rc == NO_SPEECH_EXIT_CODE:
-                last_trigger_at = now
-                rearm_until = now + (WAKEWORD_NO_SPEECH_REARM_MS / 1000.0)
-                LOGGER.info(
-                    "Wakeword trigger resulted in no_speech; rearming after %sms",
-                    WAKEWORD_NO_SPEECH_REARM_MS,
-                )
-                continue
-            if rc != 0:
-                LOGGER.warning("Wakeword trigger request failed rc=%s", rc)
-                continue
-            last_trigger_at = now
+            last_trigger_at, rearm_until = _apply_wake_trigger_result(
+                now=now,
+                rc=rc,
+                last_trigger_at=last_trigger_at,
+                rearm_until=rearm_until,
+            )

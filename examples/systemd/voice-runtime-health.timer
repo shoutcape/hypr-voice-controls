@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic voice runtime health check
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=2m
+Unit=voice-runtime-health.service
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

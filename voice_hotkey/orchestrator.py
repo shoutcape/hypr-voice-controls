@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import wave
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from .stt import transcribe
 from .vad import EndpointVAD
 
 NO_SPEECH_EXIT_CODE = 3
+CANCELLED_EXIT_CODE = 4
 
 
 @dataclass(frozen=True)
@@ -116,7 +118,13 @@ def _resolve_endpoint_session_config(
     )
 
 
-def _capture_endpointed_audio(*, source: str, config: _EndpointSessionConfig, vad: EndpointVAD) -> _EndpointCaptureResult:
+def _capture_endpointed_audio(
+    *,
+    source: str,
+    config: _EndpointSessionConfig,
+    vad: EndpointVAD,
+    cancel_event: threading.Event | None = None,
+) -> _EndpointCaptureResult:
     started_at = time.time()
     speech_started_at: float | None = None
     last_speech_at: float | None = None
@@ -128,6 +136,10 @@ def _capture_endpointed_audio(*, source: str, config: _EndpointSessionConfig, va
     with FFmpegPCMStream(sample_rate_hz=AUDIO_SAMPLE_RATE_HZ, frame_ms=SESSION_FRAME_MS) as stream:
         read_timeout_ms = max(200, SESSION_FRAME_MS * 4)
         while True:
+            if cancel_event is not None and cancel_event.is_set():
+                LOGGER.info("Endpointed command session cancelled source=%s", source)
+                break
+
             now = time.time()
             elapsed_ms = int((now - started_at) * 1000)
             if speech_started_at is None and elapsed_ms >= config.session_max_seconds * 1000:
@@ -239,6 +251,7 @@ def run_endpointed_command_session(
     vad_end_silence_ms: int | None = None,
     prompt_text: str = "Listening...",
     stt_mode: str = "command",
+    cancel_event: threading.Event | None = None,
 ) -> int:
     config = _resolve_endpoint_session_config(
         max_seconds=max_seconds,
@@ -273,7 +286,12 @@ def run_endpointed_command_session(
 
     try:
         capture_started_at = time.time()
-        capture_result = _capture_endpointed_audio(source=source, config=config, vad=vad)
+        capture_result = _capture_endpointed_audio(
+            source=source,
+            config=config,
+            vad=vad,
+            cancel_event=cancel_event,
+        )
         capture_elapsed_ms = int((time.time() - capture_started_at) * 1000)
         LOGGER.info(
             "Endpointed capture complete source=%s duration_ms=%s audio_seconds=%.2f speech_started=%s peak_rms=%s",
@@ -283,6 +301,11 @@ def run_endpointed_command_session(
             vad.has_started,
             capture_result.peak_rms,
         )
+
+        if cancel_event is not None and cancel_event.is_set():
+            notify("Voice", "Voice session cancelled")
+            LOGGER.info("Voice hotkey end status=cancelled source=%s", source)
+            return CANCELLED_EXIT_CODE
 
         if not vad.has_started and not capture_result.had_preroll_speech:
             return _handle_no_speech_result(
