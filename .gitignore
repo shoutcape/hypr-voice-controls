@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 research/
 obsidian/
+.beads/interactions.jsonl
