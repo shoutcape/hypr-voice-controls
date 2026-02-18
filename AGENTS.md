@@ -5,13 +5,11 @@
 - Prefer minimal, safe changes that preserve existing behavior unless a request explicitly asks for behavior changes.
 
 ## Project Snapshot
-- Entry point: `voice-hotkey.py` (compatibility wrapper to `voice_hotkey.main`).
-- Core daemon/client flow: `voice_hotkey/app.py` over Unix socket at `~/.local/state/voice-hotkey.sock`.
-- Streaming/endpointed command flow: `voice_hotkey/orchestrator.py`, `voice_hotkey/audio_stream.py`, `voice_hotkey/vad.py`.
-- ASR layer: `voice_hotkey/stt.py` with optional `whisper.cpp` HTTP backend in `voice_hotkey/asr_whispercpp.py`.
-- Command routing: `voice_hotkey/commands.py` using regex + `argv` mappings from `~/.config/hypr/voice-commands.json`.
-- Integrations: `voice_hotkey/integrations.py` (notify, dictation injection, command execution).
-- Wakeword daemon (optional): `voice_hotkey/wakeword.py` using openWakeWord models.
+- Entry point: `voice-hotkey.py` (compatibility wrapper to `voice_controls.main`).
+- Core daemon/client flow: `voice_controls/app.py` over Unix socket at `~/.local/state/voice-hotkey.sock`.
+- ASR layer: `voice_controls/stt.py` with optional `whisper.cpp` HTTP backend in `voice_controls/asr_whispercpp.py`.
+- Command routing: `voice_controls/commands.py` using regex + `argv` mappings from `~/.config/hypr/voice-commands.json`.
+- Integrations: `voice_controls/integrations.py` (notify, dictation injection, command execution).
 
 ## Non-Negotiable Safety Rules
 - Keep command execution shell-free: pass argument arrays only; do not introduce `shell=True`.
@@ -19,7 +17,6 @@
 - Keep personal desktop config out of the repo. Use templates under `examples/`.
 - Do not commit secrets, tokens, or private local state files.
 - Preserve transcript privacy defaults (`VOICE_LOG_TRANSCRIPTS=false` by default).
-- Keep wakeword support optional and dependency-gated.
 
 ## Python Quality Rules
 - Keep `try` blocks narrow and catch specific exceptions where practical; avoid broad catches unless followed by clear logging/fallback behavior.
@@ -29,12 +26,11 @@
 
 ## Change Rules
 - Preserve existing CLI inputs unless a migration is explicitly requested:
-  - `command-start`, `command-stop`, `dictate-start`, `dictate-stop`, `command-auto`, `wake-start`, wakeword toggles/status.
-- If you change environment variables in `voice_hotkey/config.py`, update docs and templates in the same change:
+  - `command-start`, `command-stop`, `dictate-start`, `dictate-stop`.
+- If you change environment variables in `voice_controls/config.py`, update docs and templates in the same change:
   - `README.md`
   - `getting-started.md`
   - `examples/systemd/voice-hotkey.service`
-  - `examples/systemd/wakeword.service` (if wakeword-related)
 - If you change command schema/behavior, update:
   - `examples/hypr/voice-commands.json`
   - Any related sections in `README.md` and `getting-started.md`
@@ -43,24 +39,22 @@
   - Relevant docs in `README.md` and `getting-started.md`
 
 ## Config and Path Conventions
-- Use environment variables and existing helpers in `voice_hotkey/config.py`; avoid hardcoded machine-specific paths.
+- Use environment variables and existing helpers in `voice_controls/config.py`; avoid hardcoded machine-specific paths.
 - In docs/templates, use `<REPO_DIR>` placeholders in examples when appropriate.
 - User-specific runtime/config locations are expected outside the repo:
   - `~/.config/hypr/voice-commands.json`
-  - `~/.config/hypr-voice-controls/wakeword/`
   - `~/.local/state/voice-hotkey*`
 
 ## Validation Checklist (Required After Code Changes)
 - Syntax check:
 
 ```bash
-python3 -m py_compile voice-hotkey.py voice_hotkey/*.py
+python3 -m py_compile voice-hotkey.py voice_controls/*.py
 ```
 
 - For flow changes, run manual smoke tests from `README.md`:
   - command start/stop
   - dictate start/stop
-  - wakeword status/toggle and `command-auto` or wake flow when relevant
 
 ## Documentation Standards
 - Keep instructions copy/paste ready, concise, and reproducible.
