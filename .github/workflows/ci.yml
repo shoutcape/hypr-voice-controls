@@ -19,7 +19,7 @@ jobs:
       - name: Syntax checks
         run: |
           python3 -m py_compile \
-            voice-hotkey.py \
+            hvc \
             voice_controls/*.py
 
       - name: Unit tests

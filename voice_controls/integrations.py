@@ -1,6 +1,8 @@
+import shutil
 import subprocess
 import unicodedata
 import logging
+from functools import lru_cache
 
 from .config import (
     DICTATION_ALLOW_NEWLINES,
@@ -9,7 +11,11 @@ from .config import (
     NOTIFY_TIMEOUT_MS,
 )
 from .logging_utils import LOGGER
-from .tooling import has_tool
+
+
+@lru_cache(maxsize=None)
+def has_tool(tool: str) -> bool:
+    return shutil.which(tool) is not None
 
 
 def _truncate(value: str) -> str:

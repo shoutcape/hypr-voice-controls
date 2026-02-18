@@ -6,7 +6,7 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
 printf '[1/2] Syntax checks\n'
 python3 -m py_compile \
-  "$REPO_DIR"/voice-hotkey.py \
+  "$REPO_DIR"/hvc \
   "$REPO_DIR"/voice_controls/*.py \
   "$REPO_DIR"/tests/test_phase0_guardrails.py
 

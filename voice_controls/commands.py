@@ -1,10 +1,17 @@
 import json
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from .logging_utils import LOGGER
-from .models import CommandSpec
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    pattern: str
+    argv: list[str]
+    label: str
 
 USER_COMMANDS_PATH = Path.home() / ".config" / "hypr" / "voice-commands.json"
 _USER_COMMANDS_CACHE: list[CommandSpec] = []
