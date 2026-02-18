@@ -47,20 +47,20 @@ def _sanitize_transcript(value: str) -> str:
 
 
 def _recv_json_line(sock: socket.socket) -> dict:
-    chunks: list[bytes] = []
+    raw = bytearray()
     total = 0
     while True:
         block = sock.recv(1024)
         if not block:
             break
-        chunks.append(block)
-        total += len(block)
+        block_len = len(block)
+        total += block_len
         if total > DAEMON_MAX_REQUEST_BYTES:
             raise ValueError("request_too_large")
+        raw.extend(block)
         if b"\n" in block:
             break
 
-    raw = b"".join(chunks)
     if not raw:
         raise ValueError("empty_request")
 
@@ -86,8 +86,13 @@ def validate_environment() -> bool:
 def _wait_for_captured_audio(audio_path: Path, timeout_seconds: float = 2.0) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        if audio_path.exists() and audio_path.stat().st_size > 0:
-            break
+        try:
+            if audio_path.stat().st_size > 0:
+                break
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
         time.sleep(0.05)
 
 

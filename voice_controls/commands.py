@@ -13,7 +13,7 @@ class CommandSpec:
     label: str
 
 USER_COMMANDS_PATH = Path.home() / ".config" / "hypr" / "voice-commands.json"
-_USER_COMPILED_CACHE: list[tuple[re.Pattern[str], CommandSpec]] = []
+_USER_COMPILED_CACHE: tuple[tuple[re.Pattern[str], CommandSpec], ...] = ()
 _USER_COMMANDS_MTIME_NS: int | None = None
 _USER_COMMANDS_LOCK = threading.RLock()
 MAX_COMMAND_PATTERN_LENGTH = 300
@@ -23,18 +23,18 @@ NORMALIZE_SPACE_RE = re.compile(r"\s+")
 NORMALIZE_PREFIX_RE = re.compile(r"^(and|please)\s+")
 
 
-def _load_user_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
+def _load_user_commands() -> tuple[tuple[re.Pattern[str], CommandSpec], ...]:
     try:
         payload = json.loads(USER_COMMANDS_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return []
+        return ()
     except Exception as exc:
         LOGGER.error("Failed to read user voice commands path=%s err=%s", USER_COMMANDS_PATH, exc)
-        return []
+        return ()
 
     if not isinstance(payload, list):
         LOGGER.error("Invalid user voice commands format path=%s expected=list", USER_COMMANDS_PATH)
-        return []
+        return ()
 
     compiled_loaded: list[tuple[re.Pattern[str], CommandSpec]] = []
     for index, item in enumerate(payload):
@@ -75,7 +75,7 @@ def _load_user_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
         compiled_loaded.append((compiled, CommandSpec(argv=argv, label=label)))
 
     LOGGER.info("Loaded user voice commands path=%s count=%s", USER_COMMANDS_PATH, len(compiled_loaded))
-    return compiled_loaded
+    return tuple(compiled_loaded)
 
 
 def _ensure_user_commands_cache() -> None:
@@ -86,7 +86,7 @@ def _ensure_user_commands_cache() -> None:
             stat = USER_COMMANDS_PATH.stat()
         except FileNotFoundError:
             if _USER_COMMANDS_MTIME_NS is not None:
-                _USER_COMPILED_CACHE = []
+                _USER_COMPILED_CACHE = ()
                 _USER_COMMANDS_MTIME_NS = None
                 LOGGER.info("User voice commands file removed path=%s", USER_COMMANDS_PATH)
             return
@@ -102,10 +102,10 @@ def _ensure_user_commands_cache() -> None:
         _USER_COMMANDS_MTIME_NS = mtime_ns
 
 
-def get_user_compiled_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
+def get_user_compiled_commands() -> tuple[tuple[re.Pattern[str], CommandSpec], ...]:
     _ensure_user_commands_cache()
     with _USER_COMMANDS_LOCK:
-        return list(_USER_COMPILED_CACHE)
+        return _USER_COMPILED_CACHE
 
 
 def normalize(text: str) -> str:

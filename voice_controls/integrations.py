@@ -10,6 +10,9 @@ from .config import (
 )
 from .logging_utils import LOGGER
 
+NOTIFY_ERROR_SIGNALS = ("failed", "missing", "error", "unavailable", "no speech")
+NOTIFY_SUCCESS_SIGNALS = ("enabled", "disabled", "pasted", " -> ")
+
 
 @lru_cache(maxsize=None)
 def has_tool(tool: str) -> bool:
@@ -24,11 +27,9 @@ def _truncate(value: str) -> str:
 
 def _notify_color(body: str) -> str:
     normalized = body.lower()
-    error_signals = ("failed", "missing", "error", "unavailable", "no speech")
-    success_signals = ("enabled", "disabled", "pasted", " -> ")
-    if any(token in normalized for token in error_signals):
+    if any(token in normalized for token in NOTIFY_ERROR_SIGNALS):
         return "rgb(ff6b6b)"
-    if any(token in normalized for token in success_signals):
+    if any(token in normalized for token in NOTIFY_SUCCESS_SIGNALS):
         return "rgb(87d37c)"
     return "rgb(88ccff)"
 
@@ -85,9 +86,11 @@ def inject_text_into_focused_input(text: str) -> bool:
 
 
 def _sanitize_dictation_text(text: str) -> str:
-    sanitized = text
-    # Remove bidi/control formatting characters that can cause confusing edits.
-    sanitized = "".join(ch for ch in sanitized if unicodedata.category(ch) != "Cf")
+    if text.isascii():
+        sanitized = text
+    else:
+        # Remove bidi/control formatting characters that can cause confusing edits.
+        sanitized = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
     # Normalize CRLF/CR to LF first.
     sanitized = sanitized.replace("\r\n", "\n").replace("\r", "\n")

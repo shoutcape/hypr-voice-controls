@@ -34,17 +34,15 @@ def pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
 
-    proc_path = Path(f"/proc/{pid}")
-    if not proc_path.exists():
-        return False
-
-    stat_path = proc_path / "stat"
+    stat_path = Path(f"/proc/{pid}/stat")
     try:
         stat_raw = stat_path.read_text(encoding="utf-8", errors="ignore")
         if ") " in stat_raw:
             state = stat_raw.split(") ", 1)[1][:1]
             if state == "Z":
                 return False
+    except FileNotFoundError:
+        return False
     except (OSError, ValueError, IndexError) as exc:
         LOGGER.debug("Could not parse process stat pid=%s path=%s err=%s", pid, stat_path, exc)
 
@@ -70,31 +68,24 @@ def pid_cmdline(pid: int) -> str:
         return ""
 
 
-def pid_cmdline_contains(pid: int, required_substrings: list[str] | None = None) -> bool:
-    if not required_substrings:
-        return True
-
-    cmdline = pid_cmdline(pid)
-    if not cmdline:
-        return False
-    lowered = cmdline.lower()
-    return all(token.lower() in lowered for token in required_substrings)
-
-
 def stop_recording_pid(pid: int, label: str, required_substrings: list[str] | None = None) -> None:
     if not pid_alive(pid):
         LOGGER.info("%s process already exited pid=%s", label, pid)
         return
 
-    if not pid_cmdline_contains(pid, required_substrings):
-        LOGGER.warning(
-            "%s process identity mismatch; refusing to signal pid=%s required=%s cmdline=%r",
-            label,
-            pid,
-            required_substrings,
-            pid_cmdline(pid),
-        )
-        return
+    if required_substrings:
+        cmdline = pid_cmdline(pid)
+        lowered = cmdline.lower()
+        tokens_match = bool(cmdline) and all(token.lower() in lowered for token in required_substrings)
+        if not tokens_match:
+            LOGGER.warning(
+                "%s process identity mismatch; refusing to signal pid=%s required=%s cmdline=%r",
+                label,
+                pid,
+                required_substrings,
+                cmdline,
+            )
+            return
 
     try:
         os.kill(pid, signal.SIGINT)
