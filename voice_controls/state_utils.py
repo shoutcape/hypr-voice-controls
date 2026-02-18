@@ -1,10 +1,7 @@
 import os
 import tempfile
-import time
 from pathlib import Path
 
-from .audio import pid_alive
-from .config import STATE_MAX_AGE_SECONDS
 from .logging_utils import LOGGER
 
 
@@ -25,28 +22,3 @@ def write_private_text(path: Path, content: str) -> None:
                 tmp_path.unlink()
             except OSError as exc:
                 LOGGER.debug("Could not remove temp state file path=%s err=%s", tmp_path, exc)
-
-
-def state_required_substrings(state: dict) -> list[str]:
-    raw = state.get("pid_required_substrings")
-    if isinstance(raw, list):
-        tokens = [token for token in raw if isinstance(token, str) and token.strip()]
-        if tokens:
-            return tokens
-    return ["ffmpeg"]
-
-
-def is_capture_state_active_payload(state: dict, *, now: float | None = None) -> bool:
-    pid = state.get("pid")
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-
-    active_now = time.time() if now is None else now
-    started_at = state.get("started_at")
-    if isinstance(started_at, (int, float)) and (active_now - float(started_at)) > STATE_MAX_AGE_SECONDS:
-        return False
-
-    if not pid_alive(pid):
-        return False
-
-    return True

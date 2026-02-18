@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from .audio import build_ffmpeg_wav_capture_cmd, stop_recording_pid
+from .audio import build_ffmpeg_wav_capture_cmd, pid_alive, stop_recording_pid
 from .commands import match_command, normalize
 from .config import (
     COMMAND_STATE_PATH,
@@ -33,11 +33,7 @@ from .integrations import (
     run_command,
 )
 from .logging_utils import LOGGER
-from .state_utils import (
-    is_capture_state_active_payload,
-    state_required_substrings,
-    write_private_text,
-)
+from .state_utils import write_private_text
 from .stt import preload_models, transcribe
 
 
@@ -149,15 +145,24 @@ def _stop_session(
     pid = int(state.get("pid", 0))
     audio_path = Path(state.get("audio_path", ""))
     tmpdir = Path(state.get("tmpdir", ""))
-    required_substrings = state_required_substrings(state)
+    raw_required_substrings = state.get("pid_required_substrings")
+    if isinstance(raw_required_substrings, list):
+        required_substrings = [token for token in raw_required_substrings if isinstance(token, str) and token.strip()]
+    else:
+        required_substrings = []
+    if not required_substrings:
+        required_substrings = ["ffmpeg"]
     started_at = state.get("started_at")
 
     notify("Voice", f"Key released. Processing {mode}...")
 
     # Stop recorder if still active
     if pid > 0:
-        capture_state = {"pid": pid, "started_at": started_at, "pid_required_substrings": required_substrings}
-        if is_capture_state_active_payload(capture_state):
+        active_recorder = pid_alive(pid)
+        if active_recorder and isinstance(started_at, (int, float)):
+            active_recorder = (time.time() - float(started_at)) <= STATE_MAX_AGE_SECONDS
+
+        if active_recorder:
             stop_recording_pid(pid, f"{mode} ffmpeg", required_substrings=required_substrings)
         else:
             LOGGER.warning("Skipping inactive %s recorder pid=%s max_age=%ss", mode, pid, STATE_MAX_AGE_SECONDS)

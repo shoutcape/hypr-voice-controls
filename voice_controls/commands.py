@@ -18,6 +18,9 @@ _USER_COMMANDS_MTIME_NS: int | None = None
 _USER_COMMANDS_LOCK = threading.RLock()
 MAX_COMMAND_PATTERN_LENGTH = 300
 MAX_NORMALIZED_INPUT_LENGTH = 160
+NORMALIZE_NON_ALNUM_SPACE_RE = re.compile(r"[^a-z0-9 ]+")
+NORMALIZE_SPACE_RE = re.compile(r"\s+")
+NORMALIZE_PREFIX_RE = re.compile(r"^(and|please)\s+")
 
 
 def _load_user_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
@@ -106,9 +109,9 @@ def get_user_compiled_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
 
 
 def normalize(text: str) -> str:
-    clean = re.sub(r"[^a-z0-9 ]+", "", text.lower())
-    clean = re.sub(r"\s+", " ", clean).strip()
-    clean = re.sub(r"^(and|please)\s+", "", clean)
+    clean = NORMALIZE_NON_ALNUM_SPACE_RE.sub("", text.lower())
+    clean = NORMALIZE_SPACE_RE.sub(" ", clean).strip()
+    clean = NORMALIZE_PREFIX_RE.sub("", clean)
     return clean
 
 
