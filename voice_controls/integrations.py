@@ -119,6 +119,9 @@ def _inject_text_via_clipboard(text: str) -> bool:
     if not has_tool("wl-copy"):
         LOGGER.error("Cannot inject text: wl-copy not found")
         return False
+    if not has_tool("hyprctl"):
+        LOGGER.error("Cannot inject text: hyprctl not found")
+        return False
 
     try:
         copy_proc = subprocess.run(
@@ -145,16 +148,18 @@ def _inject_text_via_clipboard(text: str) -> bool:
         LOGGER.error("Paste attempt failed cmd=%s err=%s", cmd, exc)
         return False
 
+    if proc.returncode == 0:
+        LOGGER.info("Paste attempt cmd=%s rc=0", cmd)
+        LOGGER.info("Dictation inject path=clipboard result=ok text_len=%s qmarks=%s", len(text), text.count("?"))
+        return True
+
     LOGGER.info(
-        "Paste attempt cmd=%s rc=%s stdout=%s stderr=%s",
+        "Paste attempt failed cmd=%s rc=%s stdout=%s stderr=%s",
         cmd,
         proc.returncode,
         _truncate(proc.stdout.strip()),
         _truncate(proc.stderr.strip()),
     )
-    if proc.returncode == 0:
-        LOGGER.info("Dictation inject path=clipboard result=ok text_len=%s qmarks=%s", len(text), text.count("?"))
-        return True
     return False
 
 

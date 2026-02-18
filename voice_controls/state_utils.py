@@ -3,7 +3,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .audio import pid_alive, pid_cmdline_contains
+from .audio import pid_alive
 from .config import STATE_MAX_AGE_SECONDS
 from .logging_utils import LOGGER
 
@@ -47,10 +47,6 @@ def is_capture_state_active_payload(state: dict, *, now: float | None = None) ->
         return False
 
     if not pid_alive(pid):
-        return False
-
-    required_substrings = state_required_substrings(state)
-    if not pid_cmdline_contains(pid, required_substrings=required_substrings):
         return False
 
     return True

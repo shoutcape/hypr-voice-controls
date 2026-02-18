@@ -278,14 +278,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def handle_input(input_mode: str) -> int:
-    handler = HOLD_INPUT_HANDLERS.get(input_mode)
-    if handler is None:
-        LOGGER.warning("Rejected unsupported input mode: %r", input_mode)
-        return 2
-    return handler()
-
-
 def start_daemon(entry_script: Path | None = None) -> None:
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
     runtime_python = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
@@ -330,12 +322,23 @@ def request_daemon(input_mode: str, *, entry_script: Path | None = None) -> int:
 def _execute_daemon_request(request: dict) -> int:
     request_id = next(DAEMON_REQUEST_IDS)
     started_at = time.time()
-    input_mode = request.get("input", "command-start")
+    input_mode = request.get("input")
+    if not isinstance(input_mode, str):
+        LOGGER.warning(
+            "Rejected daemon request with invalid input type=%s request_id=%s",
+            type(input_mode).__name__,
+            request_id,
+        )
+        return 2
+    handler = HOLD_INPUT_HANDLERS.get(input_mode)
+    if handler is None:
+        LOGGER.warning("Rejected invalid daemon input=%r request_id=%s", input_mode, request_id)
+        return 2
 
     LOGGER.info("Voice daemon request start id=%s input=%s", request_id, input_mode)
 
     try:
-        rc = handle_input(input_mode)
+        rc = handler()
     except Exception as exc:
         elapsed_ms = int((time.time() - started_at) * 1000)
         LOGGER.exception("Voice daemon request failed id=%s input=%s duration_ms=%s: %s", request_id, input_mode, elapsed_ms, exc)
