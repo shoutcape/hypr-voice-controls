@@ -34,7 +34,6 @@ def env_bool(name: str, default: bool) -> bool:
     return default
 
 
-AUDIO_SECONDS = env_int("VOICE_AUDIO_SECONDS", 4)
 COMMAND_MODEL_NAME = os.environ.get("VOICE_COMMAND_MODEL", "large-v3-turbo")
 DICTATE_MODEL_NAME = os.environ.get("VOICE_DICTATE_MODEL", "large-v3-turbo")
 if "VOICE_COMMAND_MODEL" not in os.environ and "VOICE_COMMAND_MODEL_EN" in os.environ:
@@ -45,30 +44,12 @@ DEVICE_CANDIDATES = [d.strip() for d in os.environ.get("VOICE_DEVICE", "cuda,cpu
 COMPUTE_TYPE_OVERRIDE = os.environ.get("VOICE_COMPUTE_TYPE")
 AUDIO_BACKEND = os.environ.get("VOICE_AUDIO_BACKEND", "pulse")
 AUDIO_SOURCE = os.environ.get("VOICE_AUDIO_SOURCE", "default")
-AUDIO_SAMPLE_RATE_HZ = env_int("VOICE_SAMPLE_RATE_HZ", 16000)
-SESSION_FRAME_MS = env_int("VOICE_FRAME_MS", 20)
-SESSION_MAX_SECONDS = env_int("VOICE_SESSION_MAX_SECONDS", 12)
-WAKE_SESSION_MAX_SECONDS = env_int("VOICE_WAKE_SESSION_MAX_SECONDS", 8)
-WAKE_DICTATE_SESSION_MAX_SECONDS = env_int("VOICE_WAKE_DICTATE_SESSION_MAX_SECONDS", 16)
-WAKE_START_SPEECH_TIMEOUT_MS = env_int("VOICE_WAKE_START_SPEECH_TIMEOUT_MS", 7000)
-WAKE_VAD_RMS_THRESHOLD = env_int("VOICE_WAKE_VAD_RMS_THRESHOLD", 80)
-WAKE_VAD_MIN_SPEECH_MS = env_int("VOICE_WAKE_VAD_MIN_SPEECH_MS", 20)
-WAKE_VAD_END_SILENCE_MS = env_int("VOICE_WAKE_VAD_END_SILENCE_MS", 300)
-WAKE_INTENT_VAD_END_SILENCE_MS = env_int("VOICE_WAKE_INTENT_VAD_END_SILENCE_MS", 700)
-WAKE_DICTATE_VAD_END_SILENCE_MS = env_int("VOICE_WAKE_DICTATE_VAD_END_SILENCE_MS", 1800)
-VAD_RMS_THRESHOLD = env_int("VOICE_VAD_RMS_THRESHOLD", 600)
-VAD_MIN_SPEECH_MS = env_int("VOICE_VAD_MIN_SPEECH_MS", 120)
-VAD_END_SILENCE_MS = env_int("VOICE_VAD_END_SILENCE_MS", 800)
 LOG_PATH = Path.home() / ".local" / "state" / "voice-hotkey.log"
 SOCKET_PATH = Path.home() / ".local" / "state" / "voice-hotkey.sock"
-DICTATE_SECONDS = env_int("VOICE_DICTATE_SECONDS", 6)
 LANGUAGE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-language"
 DICTATE_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-dictate.json"
 COMMAND_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-command.json"
-WAKE_SESSION_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-wake-session.json"
 LOCK_PATH = Path.home() / ".local" / "state" / "voice-hotkey.lock"
-WAKE_PREROLL_PCM_PATH = Path.home() / ".local" / "state" / "voice-hotkey-wake-preroll.pcm"
-WAKE_PREROLL_MAX_AGE_MS = env_int("VOICE_WAKE_PREROLL_MAX_AGE_MS", 2500)
 DAEMON_CONNECT_TIMEOUT = env_float("VOICE_DAEMON_CONNECT_TIMEOUT", 0.4)
 DAEMON_RESPONSE_TIMEOUT = env_int("VOICE_DAEMON_RESPONSE_TIMEOUT", 180)
 DAEMON_START_RETRIES = env_int("VOICE_DAEMON_START_RETRIES", 40)
@@ -93,23 +74,3 @@ DICTATION_WTYPE_FORCE_CLIPBOARD_CLASSES = [
     item.strip() for item in os.environ.get("VOICE_DICTATION_WTYPE_FORCE_CLIPBOARD_CLASSES", "com.mitchellh.ghostty").split(",") if item.strip()
 ]
 OVERLAY_ENABLED = env_bool("VOICE_OVERLAY_ENABLED", True)
-RUNTIME_V2_ENABLED = env_bool("VOICE_RUNTIME_V2", False)
-WAKEWORD_ENABLED_DEFAULT = env_bool("VOICE_WAKEWORD_ENABLED", True)
-WAKEWORD_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-wakeword.json"
-WAKEWORD_MODEL_DIR = Path(os.path.expanduser(os.environ.get("VOICE_WAKEWORD_MODEL_PATH", "~/.config/hypr-voice-controls/wakeword/")))
-WAKEWORD_MODEL_FILE = Path(os.path.expanduser(os.environ.get("VOICE_WAKEWORD_MODEL_FILE", ""))).expanduser() if os.environ.get("VOICE_WAKEWORD_MODEL_FILE") else None
-WAKEWORD_THRESHOLD = env_float("VOICE_WAKEWORD_THRESHOLD", 0.72)
-WAKEWORD_MIN_CONSECUTIVE = env_int("VOICE_WAKEWORD_MIN_CONSECUTIVE", 3)
-WAKEWORD_COOLDOWN_MS = env_int("VOICE_WAKEWORD_COOLDOWN_MS", 1500)
-WAKEWORD_NO_SPEECH_REARM_MS = env_int("VOICE_WAKEWORD_NO_SPEECH_REARM_MS", 5000)
-WAKEWORD_FRAME_MS = env_int("VOICE_WAKEWORD_FRAME_MS", 40)
-WAKEWORD_PREROLL_MS = env_int("VOICE_WAKEWORD_PREROLL_MS", 200)
-WAKE_DAEMON_RESPONSE_TIMEOUT_SECONDS = env_float(
-    "VOICE_WAKE_DAEMON_RESPONSE_TIMEOUT_SECONDS",
-    max(10.0, float(WAKE_SESSION_MAX_SECONDS) + 4.0),
-)
-WAKE_GREETING_ENABLED = env_bool("VOICE_WAKE_GREETING_ENABLED", True)
-WAKE_GREETING_TEXT = os.environ.get("VOICE_WAKE_GREETING_TEXT", "hello").strip()
-WAKE_CHIME_ENABLED = env_bool("VOICE_WAKE_CHIME_ENABLED", True)
-WAKE_CHIME_FILE = os.environ.get("VOICE_WAKE_CHIME_FILE", "").strip()
-WAKE_CHIME_VOLUME = env_float("VOICE_WAKE_CHIME_VOLUME", 0.45)

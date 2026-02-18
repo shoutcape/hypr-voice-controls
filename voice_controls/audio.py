@@ -4,7 +4,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from .config import AUDIO_BACKEND, AUDIO_SECONDS, AUDIO_SOURCE
+from .config import AUDIO_BACKEND, AUDIO_SOURCE
 from .logging_utils import LOGGER
 
 
@@ -31,25 +31,6 @@ def build_ffmpeg_wav_capture_cmd(output_path: Path, *, duration_seconds: int | N
         ]
     )
     return cmd
-
-
-def record_clip(output_path: Path, duration_seconds: int = AUDIO_SECONDS) -> bool:
-    cmd = build_ffmpeg_wav_capture_cmd(output_path, duration_seconds=duration_seconds)
-    try:
-        proc = subprocess.run(cmd, check=False, timeout=duration_seconds + 4, capture_output=True, text=True)
-    except Exception as exc:
-        LOGGER.error("Mic capture process failed: %s", exc)
-        return False
-
-    if proc.returncode != 0:
-        LOGGER.error("Mic capture failed rc=%s stderr=%s", proc.returncode, proc.stderr.strip())
-        return False
-
-    if not output_path.exists() or output_path.stat().st_size == 0:
-        LOGGER.error("Mic capture produced empty audio file: %s", output_path)
-        return False
-
-    return True
 
 
 def pid_alive(pid: int) -> bool:
