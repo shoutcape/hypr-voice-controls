@@ -80,7 +80,7 @@ def _load_user_commands() -> tuple[list[CommandSpec], list[tuple[re.Pattern[str]
     return loaded, compiled_loaded
 
 
-def get_user_commands() -> list[CommandSpec]:
+def _ensure_user_commands_cache() -> None:
     global _USER_COMMANDS_CACHE, _USER_COMPILED_CACHE, _USER_COMMANDS_MTIME_NS
 
     with _USER_COMMANDS_LOCK:
@@ -92,22 +92,21 @@ def get_user_commands() -> list[CommandSpec]:
                 _USER_COMPILED_CACHE = []
                 _USER_COMMANDS_MTIME_NS = None
                 LOGGER.info("User voice commands file removed path=%s", USER_COMMANDS_PATH)
-            return []
+            return
         except Exception as exc:
             LOGGER.error("Failed to stat user voice commands path=%s err=%s", USER_COMMANDS_PATH, exc)
-            return list(_USER_COMMANDS_CACHE)
+            return
 
         mtime_ns = stat.st_mtime_ns
         if _USER_COMMANDS_MTIME_NS == mtime_ns:
-            return list(_USER_COMMANDS_CACHE)
+            return
 
         _USER_COMMANDS_CACHE, _USER_COMPILED_CACHE = _load_user_commands()
         _USER_COMMANDS_MTIME_NS = mtime_ns
-        return list(_USER_COMMANDS_CACHE)
 
 
 def get_user_compiled_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
-    get_user_commands()
+    _ensure_user_commands_cache()
     with _USER_COMMANDS_LOCK:
         return list(_USER_COMPILED_CACHE)
 

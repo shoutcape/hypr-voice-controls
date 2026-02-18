@@ -1,12 +1,10 @@
 import shutil
 import subprocess
 import unicodedata
-import logging
 from functools import lru_cache
 
 from .config import (
     DICTATION_ALLOW_NEWLINES,
-    DICTATION_INJECTOR,
     LOG_COMMAND_OUTPUT_MAX,
     NOTIFY_TIMEOUT_MS,
 )
@@ -83,49 +81,6 @@ def inject_text_into_focused_input(text: str) -> bool:
         LOGGER.warning("Dictation text empty after sanitization; skipping injection")
         return False
 
-    debug_enabled = LOGGER.isEnabledFor(logging.DEBUG)
-
-    if debug_enabled:
-        raw_stats = _dictation_debug_stats(text)
-        safe_stats = _dictation_debug_stats(safe_text)
-        LOGGER.debug(
-            "Dictation inject debug raw_len=%s safe_len=%s raw_qmarks=%s safe_qmarks=%s raw_tabs=%s safe_tabs=%s raw_newlines=%s safe_newlines=%s raw_controls=%s safe_controls=%s injector=%s",
-            raw_stats["len"],
-            safe_stats["len"],
-            raw_stats["qmarks"],
-            safe_stats["qmarks"],
-            raw_stats["tabs"],
-            safe_stats["tabs"],
-            raw_stats["newlines"],
-            safe_stats["newlines"],
-            raw_stats["controls"],
-            safe_stats["controls"],
-            DICTATION_INJECTOR,
-        )
-
-    if DICTATION_INJECTOR == "wtype":
-        if not has_tool("wtype"):
-            LOGGER.warning("wtype not found; falling back to wl-copy + hyprctl paste path")
-            return _inject_text_via_clipboard(safe_text)
-        try:
-            timeout = min(20, max(3, int(len(safe_text) / 80) + 2))
-            proc = subprocess.run(["wtype", safe_text], check=False, capture_output=True, text=True, timeout=timeout)
-        except Exception as exc:
-            LOGGER.error("wtype injection failed: %s", exc)
-            return _inject_text_via_clipboard(safe_text)
-
-        if proc.returncode == 0:
-            LOGGER.info("Dictation inject path=wtype result=ok text_len=%s qmarks=%s", len(safe_text), safe_text.count("?"))
-            return True
-
-        LOGGER.error(
-            "wtype injection failed rc=%s stdout=%s stderr=%s",
-            proc.returncode,
-            _truncate(proc.stdout.strip()),
-            _truncate(proc.stderr.strip()),
-        )
-        return _inject_text_via_clipboard(safe_text)
-
     return _inject_text_via_clipboard(safe_text)
 
 
@@ -158,21 +113,6 @@ def _sanitize_dictation_text(text: str) -> str:
         sanitized = " ".join(sanitized.split())
 
     return sanitized.strip()
-
-
-def _dictation_debug_stats(text: str) -> dict[str, int]:
-    controls = 0
-    for ch in text:
-        code = ord(ch)
-        if (code < 32 and ch not in ("\t", "\n", "\r")) or code == 127:
-            controls += 1
-    return {
-        "len": len(text),
-        "qmarks": text.count("?"),
-        "tabs": text.count("\t"),
-        "newlines": text.count("\n") + text.count("\r"),
-        "controls": controls,
-    }
 
 
 def _inject_text_via_clipboard(text: str) -> bool:

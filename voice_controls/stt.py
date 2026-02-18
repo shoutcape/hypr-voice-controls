@@ -78,14 +78,6 @@ def compute_type_for_device(device: str) -> str:
     return "int8"
 
 
-def command_model_name() -> str:
-    return COMMAND_MODEL_NAME
-
-
-def dictation_model_name() -> str:
-    return DICTATE_MODEL_NAME
-
-
 def get_whisper_model(model_name: str) -> "FasterWhisperModel":
     from faster_whisper import WhisperModel  # type: ignore[import-not-found]
 
@@ -135,18 +127,11 @@ def warm_model(model_name: str) -> None:
         LOGGER.warning("Model warmup failed name=%s err=%s", model_name, exc)
 
 
-def is_model_loaded(model_name: str) -> bool:
-    if ASR_BACKEND == "whispercpp_server":
-        return True
-    with WHISPER_MODELS_LOCK:
-        return any(key[0] == model_name for key in WHISPER_MODELS.keys())
-
-
 def transcribe(audio_path: Path, language: str | None = None, mode: str = "command") -> tuple[str, str, float]:
     if ASR_BACKEND == "whispercpp_server":
         return transcribe_with_whisper_server(audio_path=audio_path, language=language)
 
-    model_name = command_model_name() if mode == "command" else dictation_model_name()
+    model_name = COMMAND_MODEL_NAME if mode == "command" else DICTATE_MODEL_NAME
     model = get_whisper_model(model_name)
     transcribe_kwargs = {
         "language": language,

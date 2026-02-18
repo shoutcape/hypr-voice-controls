@@ -21,6 +21,7 @@ from .config import (
     DAEMON_RESPONSE_TIMEOUT,
     DAEMON_START_DELAY,
     DAEMON_START_RETRIES,
+    DICTATE_MODEL_NAME,
     DICTATE_STATE_PATH,
     LOCK_PATH,
     LOG_TRANSCRIPTS,
@@ -39,7 +40,7 @@ from .state_utils import (
     state_required_substrings,
     write_private_text,
 )
-from .stt import dictation_model_name, is_model_loaded, preload_models, transcribe, warm_model
+from .stt import preload_models, transcribe, warm_model
 
 
 ALLOWED_INPUT_MODES = {"dictate-start", "dictate-stop", "command-start", "command-stop"}
@@ -83,7 +84,7 @@ def validate_environment() -> bool:
         notify("Voice", "Missing required tool: ffmpeg")
         return False
 
-    for tool in ("hyprctl", "wl-copy", "wtype", "notify-send"):
+    for tool in ("hyprctl", "wl-copy", "notify-send"):
         if not shutil.which(tool):
             LOGGER.warning("Missing optional tool: %s", tool)
 
@@ -196,9 +197,6 @@ def start_press_hold_dictation() -> int:
 
 def stop_press_hold_dictation() -> int:
     def _on_transcription(text: str, detected_language: str | None, language_probability: float | None) -> int:
-        if not is_model_loaded(dictation_model_name()):
-            LOGGER.info("Dictation model not yet cached model=%s", dictation_model_name())
-
         spoken = text.strip()
         probability = language_probability if language_probability is not None else 0.0
         LOGGER.info(
@@ -392,7 +390,7 @@ def run_daemon() -> int:
         SOCKET_PATH.unlink(missing_ok=True)
 
     preload_models()
-    threading.Thread(target=warm_model, args=(dictation_model_name(),), daemon=True).start()
+    threading.Thread(target=warm_model, args=(DICTATE_MODEL_NAME,), daemon=True).start()
 
     LOGGER.info("Voice hotkey daemon listening socket=%s", SOCKET_PATH)
 

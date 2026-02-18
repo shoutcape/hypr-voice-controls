@@ -36,20 +36,14 @@ def state_required_substrings(state: dict) -> list[str]:
     return ["ffmpeg"]
 
 
-def is_state_stale(started_at: float | int | None, *, now: float | None = None) -> bool:
-    if not isinstance(started_at, (int, float)):
-        return False
-    active_now = time.time() if now is None else now
-    return (active_now - float(started_at)) > STATE_MAX_AGE_SECONDS
-
-
 def is_capture_state_active_payload(state: dict, *, now: float | None = None) -> bool:
     pid = state.get("pid")
     if not isinstance(pid, int) or pid <= 0:
         return False
 
     active_now = time.time() if now is None else now
-    if is_state_stale(state.get("started_at"), now=active_now):
+    started_at = state.get("started_at")
+    if isinstance(started_at, (int, float)) and (active_now - float(started_at)) > STATE_MAX_AGE_SECONDS:
         return False
 
     if not pid_alive(pid):

@@ -11,14 +11,10 @@ Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
 Environment=VOICE_COMMAND_MODEL=large-v3-turbo
 Environment=VOICE_DICTATE_MODEL=large-v3-turbo
-Environment=VOICE_DICTATION_INJECTOR=wtype
 Environment=VOICE_ASR_BACKEND=faster_whisper
 # Environment=VOICE_ASR_BACKEND=whispercpp_server
 # Environment=VOICE_WHISPER_SERVER_URL=http://127.0.0.1:8080/inference
 Environment=VOICE_NOTIFY_TIMEOUT_MS=2200
-Environment=VOICE_TTS_ENABLED=false
-Environment=VOICE_TTS_COOLDOWN_MS=900
-Environment=VOICE_TTS_MAX_CHARS=90
 
 [Install]
 WantedBy=default.target
