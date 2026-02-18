@@ -9,7 +9,6 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -28,7 +27,6 @@ from .config import (
     SOCKET_PATH,
     STATE_MAX_AGE_SECONDS,
     VENV_PYTHON,
-    DICTATION_INJECTOR,
 )
 from .integrations import (
     inject_text_into_focused_input,
@@ -37,7 +35,6 @@ from .integrations import (
 )
 from .logging_utils import LOGGER
 from .state_utils import (
-    get_saved_dictation_language,
     is_capture_state_active_payload,
     state_required_substrings,
     write_private_text,
@@ -81,23 +78,14 @@ def _recv_json_line(sock: socket.socket) -> dict:
 
 
 def validate_environment() -> bool:
-    required_tools = ["ffmpeg"]
-    missing_required = [tool for tool in required_tools if not shutil.which(tool)]
-    if missing_required:
-        LOGGER.error("Missing required tools: %s", ", ".join(missing_required))
-        notify("Voice", f"Missing required tools: {', '.join(missing_required)}")
+    if not shutil.which("ffmpeg"):
+        LOGGER.error("Missing required tool: ffmpeg")
+        notify("Voice", "Missing required tool: ffmpeg")
         return False
 
-    optional_tools = ["hyprctl", "wl-copy", "notify-send"]
-    if DICTATION_INJECTOR == "wtype":
-        optional_tools.append("wtype")
-    missing_optional = [tool for tool in optional_tools if not shutil.which(tool)]
-    if missing_optional:
-        LOGGER.warning("Missing optional tools: %s", ", ".join(missing_optional))
-
-    if DICTATION_INJECTOR == "wtype" and not shutil.which("wtype"):
-        LOGGER.warning("Dictation injector is set to wtype but wtype is not installed; using clipboard fallback")
-        notify("Voice", "wtype missing: using clipboard fallback")
+    for tool in ("hyprctl", "wl-copy", "wtype", "notify-send"):
+        if not shutil.which(tool):
+            LOGGER.warning("Missing optional tool: %s", tool)
 
     return True
 
@@ -110,106 +98,14 @@ def _wait_for_captured_audio(audio_path: Path, timeout_seconds: float = 2.0) -> 
         time.sleep(0.05)
 
 
-def _load_press_hold_state(state_path: Path, state_label: str) -> dict | None:
-    try:
-        return json.loads(state_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        LOGGER.error("Failed to parse %s state: %s", state_label, exc)
-        state_path.unlink(missing_ok=True)
-        return None
+# -- Press/hold session helpers ------------------------------------------------
 
+def _start_session(state_path: Path, preempt_fn: Callable[[], int], mode: str) -> int:
+    if state_path.exists():
+        LOGGER.info("Preempting existing %s session", mode)
+        preempt_fn()
 
-def _stop_press_hold_recorder(
-    *,
-    pid: int,
-    started_at: float | int | None,
-    stale_label: str,
-    stop_label: str,
-    required_substrings: list[str],
-) -> None:
-    if pid <= 0:
-        return
-
-    capture_state = {
-        "pid": pid,
-        "started_at": started_at,
-        "pid_required_substrings": required_substrings,
-    }
-    if not is_capture_state_active_payload(capture_state):
-        LOGGER.warning(
-            "Skipping inactive %s recorder stop pid=%s started_at=%s max_age=%ss",
-            stale_label,
-            pid,
-            started_at,
-            STATE_MAX_AGE_SECONDS,
-        )
-        return
-
-    stop_recording_pid(pid, stop_label, required_substrings=required_substrings)
-
-
-def _process_press_hold_transcription(
-    *,
-    audio_path: Path,
-    language: str,
-    no_speech_source: str,
-    transcribe_mode: str,
-    transcribe_failure_label: str,
-    transcribe_failure_source: str,
-    on_transcription: Callable[[str, str | None, float | None, str], int],
-) -> int:
-    if not audio_path.exists() or audio_path.stat().st_size == 0:
-        notify("Voice", "No speech captured")
-        LOGGER.info("Voice hotkey end status=no_speech source=%s", no_speech_source)
-        return 0
-
-    try:
-        text, detected_language, language_probability = transcribe(audio_path, language=language, mode=transcribe_mode)
-    except Exception as exc:
-        notify("Voice", f"Transcription failed: {type(exc).__name__}")
-        LOGGER.exception("%s transcription failed: %s", transcribe_failure_label, exc)
-        LOGGER.info("Voice hotkey end status=transcription_failed source=%s", transcribe_failure_source)
-        return 1
-
-    return on_transcription(text, detected_language, language_probability, language)
-
-
-@dataclass(frozen=True)
-class _PressHoldStartProfile:
-    state_path: Path
-    tmp_prefix: str
-    source_key: str
-    preempt_label: str
-    preempt_fn: Callable[[], int]
-    notify_text: str
-    start_log_key: str
-
-
-@dataclass(frozen=True)
-class _PressHoldStopProfile:
-    state_path: Path
-    no_active_source: str
-    no_active_trigger_source: str
-    no_active_notify: str
-    state_label: str
-    processing_notify: str
-    stale_label: str
-    stop_label: str
-    no_speech_source: str
-    transcribe_mode: str
-    transcribe_failure_label: str
-    transcribe_failure_source: str
-
-
-def _start_press_hold_session(
-    profile: _PressHoldStartProfile,
-) -> int:
-    if profile.state_path.exists():
-        LOGGER.info("Voice hotkey source=%s detected existing active state; preempting old %s", profile.source_key, profile.preempt_label)
-        profile.preempt_fn()
-
-    language = get_saved_dictation_language()
-    tmpdir = tempfile.mkdtemp(prefix=profile.tmp_prefix)
+    tmpdir = tempfile.mkdtemp(prefix=f"voice-{mode}-hold-")
     audio_path = Path(tmpdir) / "capture.wav"
 
     try:
@@ -221,7 +117,7 @@ def _start_press_hold_session(
         )
     except FileNotFoundError:
         notify("Voice", "ffmpeg not found")
-        LOGGER.error("Could not start %s recorder: ffmpeg not found", profile.preempt_label)
+        LOGGER.error("Could not start %s recorder: ffmpeg not found", mode)
         return 1
 
     state = {
@@ -229,179 +125,117 @@ def _start_press_hold_session(
         "tmpdir": tmpdir,
         "audio_path": str(audio_path),
         "pid_required_substrings": ["ffmpeg", str(audio_path)],
-        "language": language,
         "started_at": time.time(),
     }
-    write_private_text(profile.state_path, json.dumps(state))
-    notify("Voice", profile.notify_text.format(language=language))
-    LOGGER.info("Voice hotkey %s pid=%s language=%s audio=%s", profile.start_log_key, proc.pid, language, audio_path)
+    write_private_text(state_path, json.dumps(state))
+    notify("Voice", f"Recording {mode}... release keys to process (en)")
+    LOGGER.info("Voice hotkey %s_start pid=%s audio=%s", mode, proc.pid, audio_path)
     return 0
 
 
-def _stop_press_hold_session(
-    profile: _PressHoldStopProfile,
-    on_transcription: Callable[[str, str | None, float | None, str], int],
+def _stop_session(
+    state_path: Path,
+    mode: str,
+    on_transcription: Callable[[str, str | None, float | None], int],
 ) -> int:
-    if not profile.state_path.exists():
-        LOGGER.info("Voice hotkey end status=%s source=%s", profile.no_active_source, profile.no_active_trigger_source)
-        notify("Voice", profile.no_active_notify)
+    if not state_path.exists():
+        LOGGER.info("Voice hotkey end status=no_active_%s", mode)
+        notify("Voice", f"No active {mode}")
         return 0
 
-    state = _load_press_hold_state(profile.state_path, profile.state_label)
-    if state is None:
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        LOGGER.error("Failed to parse %s state: %s", mode, exc)
+        state_path.unlink(missing_ok=True)
         return 1
 
     pid = int(state.get("pid", 0))
     audio_path = Path(state.get("audio_path", ""))
     tmpdir = Path(state.get("tmpdir", ""))
-    language = state.get("language", get_saved_dictation_language())
     required_substrings = state_required_substrings(state)
     started_at = state.get("started_at")
 
-    notify("Voice", profile.processing_notify)
+    notify("Voice", f"Key released. Processing {mode}...")
 
-    _stop_press_hold_recorder(
-        pid=pid,
-        started_at=started_at,
-        stale_label=profile.stale_label,
-        stop_label=profile.stop_label,
-        required_substrings=required_substrings,
-    )
+    # Stop recorder if still active
+    if pid > 0:
+        capture_state = {"pid": pid, "started_at": started_at, "pid_required_substrings": required_substrings}
+        if is_capture_state_active_payload(capture_state):
+            stop_recording_pid(pid, f"{mode} ffmpeg", required_substrings=required_substrings)
+        else:
+            LOGGER.warning("Skipping inactive %s recorder pid=%s max_age=%ss", mode, pid, STATE_MAX_AGE_SECONDS)
 
     _wait_for_captured_audio(audio_path)
 
     try:
-        return _process_press_hold_transcription(
-            audio_path=audio_path,
-            language=language,
-            no_speech_source=profile.no_speech_source,
-            transcribe_mode=profile.transcribe_mode,
-            transcribe_failure_label=profile.transcribe_failure_label,
-            transcribe_failure_source=profile.transcribe_failure_source,
-            on_transcription=on_transcription,
-        )
+        if not audio_path.exists() or audio_path.stat().st_size == 0:
+            notify("Voice", "No speech captured")
+            LOGGER.info("Voice hotkey end status=no_speech source=%s", mode)
+            return 0
+
+        try:
+            text, detected_language, language_probability = transcribe(audio_path, language="en", mode=mode)
+        except Exception as exc:
+            notify("Voice", f"Transcription failed: {type(exc).__name__}")
+            LOGGER.exception("%s transcription failed: %s", mode, exc)
+            return 1
+
+        return on_transcription(text, detected_language, language_probability)
     finally:
-        profile.state_path.unlink(missing_ok=True)
+        state_path.unlink(missing_ok=True)
         if tmpdir.exists():
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _complete_dictation_output(spoken: str, *, source: str) -> int:
-    if not spoken:
-        notify("Voice", "No speech detected")
-        LOGGER.info("Voice hotkey end status=no_speech source=%s", source)
-        return 0
-
-    if inject_text_into_focused_input(spoken):
-        notify("Voice", "Dictation pasted")
-        LOGGER.info("Voice hotkey end status=ok source=%s text=%s", source, _sanitize_transcript(spoken))
-        return 0
-
-    notify("Voice", "Dictation paste failed")
-    LOGGER.info("Voice hotkey end status=paste_failed source=%s text=%s", source, _sanitize_transcript(spoken))
-    return 1
-
+# -- Dictation ----------------------------------------------------------------
 
 def start_press_hold_dictation() -> int:
-    return _start_press_hold_session(
-        _PressHoldStartProfile(
-            state_path=DICTATE_STATE_PATH,
-            tmp_prefix="voice-dictate-hold-",
-            source_key="dictate_start",
-            preempt_label="dictation",
-            preempt_fn=stop_press_hold_dictation,
-            notify_text="Recording... release keys to transcribe ({language})",
-            start_log_key="dictate_start",
-        )
-    )
-
-
-def start_press_hold_command() -> int:
-    return _start_press_hold_session(
-        _PressHoldStartProfile(
-            state_path=COMMAND_STATE_PATH,
-            tmp_prefix="voice-command-hold-",
-            source_key="command_start",
-            preempt_label="command",
-            preempt_fn=stop_press_hold_command,
-            notify_text="Listening for command ({language})... release keys to run",
-            start_log_key="command_start",
-        )
-    )
+    return _start_session(DICTATE_STATE_PATH, stop_press_hold_dictation, "dictate")
 
 
 def stop_press_hold_dictation() -> int:
-    def _on_dictation_transcription(
-        text: str,
-        detected_language: str | None,
-        language_probability: float | None,
-        selected_language: str,
-    ) -> int:
-        selected_dictation_model = dictation_model_name()
-        if not is_model_loaded(selected_dictation_model):
-            LOGGER.info("Dictation model not yet cached model=%s", selected_dictation_model)
+    def _on_transcription(text: str, detected_language: str | None, language_probability: float | None) -> int:
+        if not is_model_loaded(dictation_model_name()):
+            LOGGER.info("Dictation model not yet cached model=%s", dictation_model_name())
 
         spoken = text.strip()
         probability = language_probability if language_probability is not None else 0.0
         LOGGER.info(
-            "Dictation hold language_selected=%s language_detected=%s probability=%.3f text=%s",
-            selected_language,
+            "Dictation hold language_detected=%s probability=%.3f text=%s",
             detected_language,
             probability,
             _sanitize_transcript(spoken),
         )
-        return _complete_dictation_output(spoken, source="dictate_hold")
 
-    return _stop_press_hold_session(
-        _PressHoldStopProfile(
-            state_path=DICTATE_STATE_PATH,
-            no_active_source="no_active_dictation",
-            no_active_trigger_source="dictate_stop",
-            no_active_notify="No active dictation",
-            state_label="dictation",
-            processing_notify="Key released. Processing dictation...",
-            stale_label="dictation",
-            stop_label="Dictation ffmpeg",
-            no_speech_source="dictate_hold",
-            transcribe_mode="dictate",
-            transcribe_failure_label="Dictation hold",
-            transcribe_failure_source="dictate_hold",
-        ),
-        on_transcription=_on_dictation_transcription,
-    )
+        if not spoken:
+            notify("Voice", "No speech detected")
+            LOGGER.info("Voice hotkey end status=no_speech source=dictate")
+            return 0
+
+        if inject_text_into_focused_input(spoken):
+            notify("Voice", "Dictation pasted")
+            LOGGER.info("Voice hotkey end status=ok source=dictate text=%s", _sanitize_transcript(spoken))
+            return 0
+
+        notify("Voice", "Dictation paste failed")
+        LOGGER.info("Voice hotkey end status=paste_failed source=dictate text=%s", _sanitize_transcript(spoken))
+        return 1
+
+    return _stop_session(DICTATE_STATE_PATH, "dictate", _on_transcription)
+
+
+# -- Command -------------------------------------------------------------------
+
+def start_press_hold_command() -> int:
+    return _start_session(COMMAND_STATE_PATH, stop_press_hold_command, "command")
 
 
 def stop_press_hold_command() -> int:
-    def _on_command_transcription(
-        text: str,
-        detected_language: str | None,
-        language_probability: float | None,
-        _selected_language: str,
-    ) -> int:
-        return handle_command_text(
-            text,
-            source="voice_hold",
-            language=detected_language,
-            language_probability=language_probability,
-        )
+    def _on_transcription(text: str, detected_language: str | None, language_probability: float | None) -> int:
+        return handle_command_text(text, language=detected_language, language_probability=language_probability)
 
-    return _stop_press_hold_session(
-        _PressHoldStopProfile(
-            state_path=COMMAND_STATE_PATH,
-            no_active_source="no_active_command",
-            no_active_trigger_source="command_stop",
-            no_active_notify="No active voice command",
-            state_label="command",
-            processing_notify="Key released. Processing command...",
-            stale_label="command",
-            stop_label="Command ffmpeg",
-            no_speech_source="voice_hold",
-            transcribe_mode="command",
-            transcribe_failure_label="Command hold",
-            transcribe_failure_source="voice_hold",
-        ),
-        on_transcription=_on_command_transcription,
-    )
+    return _stop_session(COMMAND_STATE_PATH, "command", _on_transcription)
 
 
 HOLD_INPUT_HANDLERS: dict[str, Callable[[], int]] = {
@@ -412,12 +246,11 @@ HOLD_INPUT_HANDLERS: dict[str, Callable[[], int]] = {
 }
 
 
-def handle_command_text(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
+def handle_command_text(raw_text: str, language: str | None, language_probability: float | None) -> int:
     clean = normalize(raw_text)
     probability = language_probability if language_probability is not None else 0.0
     LOGGER.info(
-        "Input source=%s language=%s probability=%.3f raw=%s normalized=%s",
-        source,
+        "Input language=%s probability=%.3f raw=%s normalized=%s",
         language,
         probability,
         _sanitize_transcript(raw_text),
@@ -426,37 +259,27 @@ def handle_command_text(raw_text: str, source: str, language: str | None, langua
 
     if not clean:
         notify("Voice", "No command detected")
-        LOGGER.info("Voice hotkey end status=no_input source=%s", source)
+        LOGGER.info("Voice hotkey end status=no_input source=command")
         return 0
 
     argv, label = match_command(clean)
     if not argv:
         notify("Voice", f"Heard: '{clean}' (no match)")
-        LOGGER.info("Voice hotkey end status=no_match source=%s heard=%s", source, _sanitize_transcript(clean))
+        LOGGER.info("Voice hotkey end status=no_match heard=%s", _sanitize_transcript(clean))
         return 0
 
     ok = run_command(argv)
     if ok:
         notify("Voice", f"Heard: '{clean}' -> {label}")
-        LOGGER.info(
-            "Voice hotkey end status=ok source=%s heard=%s action=%s argv=%s",
-            source,
-            _sanitize_transcript(clean),
-            label,
-            argv,
-        )
+        LOGGER.info("Voice hotkey end status=ok heard=%s action=%s", _sanitize_transcript(clean), label)
         return 0
 
     notify("Voice", f"Command failed: {label}")
-    LOGGER.info(
-        "Voice hotkey end status=command_failed source=%s heard=%s action=%s argv=%s",
-        source,
-        _sanitize_transcript(clean),
-        label,
-        argv,
-    )
+    LOGGER.info("Voice hotkey end status=command_failed heard=%s action=%s", _sanitize_transcript(clean), label)
     return 1
 
+
+# -- CLI and daemon ------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Voice/dictation hotkey command runner")
@@ -474,7 +297,6 @@ def handle_input(input_mode: str) -> int:
 
 def start_daemon(entry_script: Path | None = None) -> None:
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
-
     runtime_python = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     script_path = entry_script if entry_script is not None else Path(sys.argv[0]).resolve()
 
@@ -514,76 +336,42 @@ def request_daemon(input_mode: str, *, entry_script: Path | None = None) -> int:
     return 1
 
 
-def _parse_daemon_request(conn: socket.socket) -> dict | None:
-    try:
-        conn.settimeout(DAEMON_CONNECT_TIMEOUT)
-        return _recv_json_line(conn)
-    except (socket.timeout, UnicodeDecodeError, json.JSONDecodeError, ValueError, OSError) as exc:
-        LOGGER.warning("Voice daemon request parse failed: %s", exc)
-        return None
-
-
 def _execute_daemon_request(request: dict) -> int:
     request_id = next(DAEMON_REQUEST_IDS)
     started_at = time.time()
     input_mode = request.get("input", "command-start")
     if input_mode not in ALLOWED_INPUT_MODES:
-        LOGGER.warning(
-            "Rejected invalid daemon input=%r request_id=%s",
-            input_mode,
-            request_id,
-        )
+        LOGGER.warning("Rejected invalid daemon input=%r request_id=%s", input_mode, request_id)
         return 2
 
-    LOGGER.info(
-        "Voice daemon request start id=%s input=%s",
-        request_id,
-        input_mode,
-    )
+    LOGGER.info("Voice daemon request start id=%s input=%s", request_id, input_mode)
 
     try:
         rc = handle_input(input_mode)
     except Exception as exc:
         elapsed_ms = int((time.time() - started_at) * 1000)
-        LOGGER.exception(
-            "Voice daemon request failed id=%s input=%s duration_ms=%s: %s",
-            request_id,
-            input_mode,
-            elapsed_ms,
-            exc,
-        )
+        LOGGER.exception("Voice daemon request failed id=%s input=%s duration_ms=%s: %s", request_id, input_mode, elapsed_ms, exc)
         return 1
 
     elapsed_ms = int((time.time() - started_at) * 1000)
-    LOGGER.info(
-        "Voice daemon request end id=%s input=%s rc=%s duration_ms=%s",
-        request_id,
-        input_mode,
-        rc,
-        elapsed_ms,
-    )
+    LOGGER.info("Voice daemon request end id=%s input=%s rc=%s duration_ms=%s", request_id, input_mode, rc, elapsed_ms)
     return rc
-
-
-def _send_daemon_response(conn: socket.socket, rc: int, extra: dict[str, object] | None = None) -> None:
-    try:
-        payload: dict[str, object] = {"rc": rc}
-        if extra:
-            payload.update(extra)
-        conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
-    except OSError as exc:
-        LOGGER.debug("Voice daemon response send failed rc=%s err=%s", rc, exc)
 
 
 def _handle_daemon_connection(conn: socket.socket) -> None:
     with conn:
-        request = _parse_daemon_request(conn)
-        if request is None:
-            _send_daemon_response(conn, 1)
-            return
+        try:
+            conn.settimeout(DAEMON_CONNECT_TIMEOUT)
+            request = _recv_json_line(conn)
+        except (socket.timeout, UnicodeDecodeError, json.JSONDecodeError, ValueError, OSError) as exc:
+            LOGGER.warning("Voice daemon request parse failed: %s", exc)
+            request = None
 
-        rc = _execute_daemon_request(request)
-        _send_daemon_response(conn, rc)
+        rc = _execute_daemon_request(request) if request is not None else 1
+        try:
+            conn.sendall((json.dumps({"rc": rc}) + "\n").encode("utf-8"))
+        except OSError as exc:
+            LOGGER.debug("Voice daemon response send failed rc=%s err=%s", rc, exc)
 
 
 def run_daemon() -> int:
@@ -603,10 +391,10 @@ def run_daemon() -> int:
     if SOCKET_PATH.exists():
         SOCKET_PATH.unlink(missing_ok=True)
 
-    LOGGER.info("Voice hotkey runtime mode=hold-only")
-
     preload_models()
     threading.Thread(target=warm_model, args=(dictation_model_name(),), daemon=True).start()
+
+    LOGGER.info("Voice hotkey daemon listening socket=%s", SOCKET_PATH)
 
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
@@ -616,7 +404,6 @@ def run_daemon() -> int:
             except Exception as exc:
                 LOGGER.warning("Could not chmod daemon socket: %s", exc)
             server.listen(8)
-            LOGGER.info("Voice hotkey daemon listening socket=%s", SOCKET_PATH)
 
             while True:
                 conn, _ = server.accept()

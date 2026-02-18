@@ -60,8 +60,3 @@ def is_capture_state_active_payload(state: dict, *, now: float | None = None) ->
         return False
 
     return True
-
-
-def get_saved_dictation_language() -> str:
-    # v1 is intentionally English-only.
-    return "en"
