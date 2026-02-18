@@ -235,8 +235,6 @@ HOLD_INPUT_HANDLERS: dict[str, Callable[[], int]] = {
     "command-stop": stop_press_hold_command,
 }
 
-ALLOWED_INPUT_MODES = frozenset(HOLD_INPUT_HANDLERS)
-
 
 def handle_command_text(raw_text: str, language: str | None, language_probability: float | None) -> int:
     clean = normalize(raw_text)
@@ -281,10 +279,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def handle_input(input_mode: str) -> int:
-    if input_mode not in ALLOWED_INPUT_MODES:
+    handler = HOLD_INPUT_HANDLERS.get(input_mode)
+    if handler is None:
         LOGGER.warning("Rejected unsupported input mode: %r", input_mode)
         return 2
-    return HOLD_INPUT_HANDLERS[input_mode]()
+    return handler()
 
 
 def start_daemon(entry_script: Path | None = None) -> None:

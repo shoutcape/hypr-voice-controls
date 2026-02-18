@@ -6,14 +6,14 @@ from voice_controls import app
 
 
 class Phase0GuardrailTests(unittest.TestCase):
-    def test_allowed_input_modes_include_core_contract(self) -> None:
+    def test_input_handlers_include_core_contract(self) -> None:
         expected = {
             "command-start",
             "command-stop",
             "dictate-start",
             "dictate-stop",
         }
-        self.assertTrue(expected.issubset(app.ALLOWED_INPUT_MODES))
+        self.assertTrue(expected.issubset(app.HOLD_INPUT_HANDLERS))
 
     def test_execute_daemon_request_returns_2_for_invalid_input(self) -> None:
         rc = app._execute_daemon_request({"input": "definitely-not-valid"})
