@@ -48,11 +48,11 @@ class Phase0GuardrailTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         mock_run_daemon.assert_called_once_with()
 
-    def test_legacy_launcher_exists_for_hotkey_compatibility(self) -> None:
+    def test_hvc_launcher_exists(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        legacy_launcher = repo_root / "voice-hotkey.py"
-        self.assertTrue(legacy_launcher.exists())
-        self.assertTrue(legacy_launcher.is_file())
+        launcher = repo_root / "hvc"
+        self.assertTrue(launcher.exists())
+        self.assertTrue(launcher.is_file())
 
 
 if __name__ == "__main__":

@@ -5,6 +5,8 @@ This project now supports only press/release hotkeys:
 - `command-start` / `command-stop`
 - `dictate-start` / `dictate-stop`
 
+Use `hvc` as the launcher entrypoint.
+
 ## Dependencies
 
 - required: `ffmpeg`
