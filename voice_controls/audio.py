@@ -7,7 +7,7 @@ from .config import AUDIO_BACKEND, AUDIO_SOURCE
 from .logging_utils import LOGGER
 
 
-def build_ffmpeg_wav_capture_cmd(output_path: Path, *, duration_seconds: int | None = None) -> list[str]:
+def build_ffmpeg_wav_capture_cmd(output_path: Path) -> list[str]:
     cmd = [
         "ffmpeg",
         "-y",
@@ -18,8 +18,6 @@ def build_ffmpeg_wav_capture_cmd(output_path: Path, *, duration_seconds: int | N
         "-i",
         AUDIO_SOURCE,
     ]
-    if duration_seconds is not None:
-        cmd.extend(["-t", str(duration_seconds)])
     cmd.extend(
         [
             "-ac",
