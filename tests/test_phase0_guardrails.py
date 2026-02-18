@@ -1,8 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from voice_hotkey import app
-from voice_hotkey.orchestrator import NO_SPEECH_EXIT_CODE
+from voice_controls import app
 
 
 class Phase0GuardrailTests(unittest.TestCase):
@@ -12,34 +11,23 @@ class Phase0GuardrailTests(unittest.TestCase):
             "command-stop",
             "dictate-start",
             "dictate-stop",
-            "command-auto",
-            "wake-start",
-            "wakeword-enable",
-            "wakeword-disable",
-            "wakeword-toggle",
-            "wakeword-status",
-            "runtime-status",
-            "runtime-status-json",
         }
         self.assertTrue(expected.issubset(app.ALLOWED_INPUT_MODES))
-
-    def test_no_speech_exit_code_contract(self) -> None:
-        self.assertEqual(NO_SPEECH_EXIT_CODE, 3)
 
     def test_execute_daemon_request_returns_2_for_invalid_input(self) -> None:
         rc = app._execute_daemon_request({"input": "definitely-not-valid"})
         self.assertEqual(rc, 2)
 
-    def test_execute_daemon_request_normalizes_alias_before_handling(self) -> None:
-        with patch("voice_hotkey.app.handle_input", return_value=0) as mock_handle_input:
-            rc = app._execute_daemon_request({"input": "text"})
+    def test_execute_daemon_request_forwards_supported_input(self) -> None:
+        with patch("voice_controls.app.handle_input", return_value=0) as mock_handle_input:
+            rc = app._execute_daemon_request({"input": "dictate-start"})
 
         self.assertEqual(rc, 0)
-        mock_handle_input.assert_called_once_with("dictate")
+        mock_handle_input.assert_called_once_with("dictate-start")
 
     def test_execute_daemon_request_returns_1_on_handler_exception(self) -> None:
-        with patch("voice_hotkey.app.handle_input", side_effect=RuntimeError("boom")):
-            rc = app._execute_daemon_request({"input": "wakeword-status"})
+        with patch("voice_controls.app.handle_input", side_effect=RuntimeError("boom")):
+            rc = app._execute_daemon_request({"input": "command-start"})
         self.assertEqual(rc, 1)
 
 

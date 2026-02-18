@@ -1,9 +1,0 @@
-[Unit]
-Description=Voice runtime health check
-After=voice-hotkey.service
-Wants=voice-hotkey.service
-OnFailure=voice-runtime-health-notify@%n.service
-
-[Service]
-Type=oneshot
-ExecStart=<REPO_DIR>/scripts/runtime-health-check.sh
