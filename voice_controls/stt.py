@@ -7,10 +7,9 @@ from typing import TYPE_CHECKING
 from .asr_whispercpp import transcribe_file as transcribe_with_whisper_server
 from .config import (
     ASR_BACKEND,
-    COMMAND_MODEL_NAME,
     COMPUTE_TYPE_OVERRIDE,
     DEVICE_CANDIDATES,
-    DICTATE_MODEL_NAME,
+    MODEL_NAME,
 )
 from .logging_utils import LOGGER
 
@@ -131,7 +130,7 @@ def transcribe(audio_path: Path, language: str | None = None, mode: str = "comma
     if ASR_BACKEND == "whispercpp_server":
         return transcribe_with_whisper_server(audio_path=audio_path, language=language)
 
-    model_name = COMMAND_MODEL_NAME if mode == "command" else DICTATE_MODEL_NAME
+    model_name = MODEL_NAME
     model = get_whisper_model(model_name)
     transcribe_kwargs = {
         "language": language,
@@ -157,6 +156,6 @@ def preload_models() -> None:
     if ASR_BACKEND == "whispercpp_server":
         return
     try:
-        get_whisper_model(COMMAND_MODEL_NAME)
+        get_whisper_model(MODEL_NAME)
     except Exception as exc:
-        LOGGER.warning("Model preload failed name=%s err=%s", COMMAND_MODEL_NAME, exc)
+        LOGGER.warning("Model preload failed name=%s err=%s", MODEL_NAME, exc)

@@ -21,7 +21,7 @@ from .config import (
     DAEMON_RESPONSE_TIMEOUT,
     DAEMON_START_DELAY,
     DAEMON_START_RETRIES,
-    DICTATE_MODEL_NAME,
+    MODEL_NAME,
     DICTATE_STATE_PATH,
     LOCK_PATH,
     LOG_TRANSCRIPTS,
@@ -390,7 +390,7 @@ def run_daemon() -> int:
         SOCKET_PATH.unlink(missing_ok=True)
 
     preload_models()
-    threading.Thread(target=warm_model, args=(DICTATE_MODEL_NAME,), daemon=True).start()
+    threading.Thread(target=warm_model, args=(MODEL_NAME,), daemon=True).start()
 
     LOGGER.info("Voice hotkey daemon listening socket=%s", SOCKET_PATH)
 
