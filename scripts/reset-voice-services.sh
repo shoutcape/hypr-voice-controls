@@ -6,6 +6,7 @@ STATE_DIR="$HOME/.local/state"
 systemctl --user stop voice-hotkey.service || true
 
 pkill -f "hvc --daemon" || true
+pkill -f "voice-hotkey.py --daemon" || true
 
 rm -f "$STATE_DIR/voice-hotkey.sock"
 rm -f "$STATE_DIR/voice-hotkey.lock"

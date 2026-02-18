@@ -20,9 +20,10 @@ jobs:
         run: |
           python3 -m py_compile \
             hvc \
+            voice-hotkey.py \
             voice_controls/*.py
 
       - name: Unit tests
         run: |
           python3 -m unittest \
-            tests/test_phase0_guardrails.py
+            discover -s tests -p 'test_*.py'
