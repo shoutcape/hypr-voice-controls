@@ -41,8 +41,6 @@ from .state_utils import (
 from .stt import preload_models, transcribe
 
 
-ALLOWED_INPUT_MODES = {"dictate-start", "dictate-stop", "command-start", "command-stop"}
-
 DAEMON_REQUEST_IDS = itertools.count(1)
 
 
@@ -237,6 +235,8 @@ HOLD_INPUT_HANDLERS: dict[str, Callable[[], int]] = {
     "command-stop": stop_press_hold_command,
 }
 
+ALLOWED_INPUT_MODES = frozenset(HOLD_INPUT_HANDLERS)
+
 
 def handle_command_text(raw_text: str, language: str | None, language_probability: float | None) -> int:
     clean = normalize(raw_text)
@@ -332,9 +332,6 @@ def _execute_daemon_request(request: dict) -> int:
     request_id = next(DAEMON_REQUEST_IDS)
     started_at = time.time()
     input_mode = request.get("input", "command-start")
-    if input_mode not in ALLOWED_INPUT_MODES:
-        LOGGER.warning("Rejected invalid daemon input=%r request_id=%s", input_mode, request_id)
-        return 2
 
     LOGGER.info("Voice daemon request start id=%s input=%s", request_id, input_mode)
 
