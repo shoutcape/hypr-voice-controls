@@ -130,8 +130,7 @@ def transcribe(audio_path: Path, language: str | None = None, mode: str = "comma
     if ASR_BACKEND == "whispercpp_server":
         return transcribe_with_whisper_server(audio_path=audio_path, language=language)
 
-    model_name = MODEL_NAME
-    model = get_whisper_model(model_name)
+    model = get_whisper_model(MODEL_NAME)
     transcribe_kwargs = {
         "language": language,
         "vad_filter": True,

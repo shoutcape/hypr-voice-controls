@@ -9,7 +9,6 @@ from .logging_utils import LOGGER
 
 @dataclass(frozen=True)
 class CommandSpec:
-    pattern: str
     argv: list[str]
     label: str
 
@@ -70,8 +69,7 @@ def _load_user_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
             LOGGER.warning("Skipping user voice command index=%s reason=bad_regex err=%s", index, exc)
             continue
 
-        spec = CommandSpec(pattern=pattern, argv=argv, label=label)
-        compiled_loaded.append((compiled, spec))
+        compiled_loaded.append((compiled, CommandSpec(argv=argv, label=label)))
 
     LOGGER.info("Loaded user voice commands path=%s count=%s", USER_COMMANDS_PATH, len(compiled_loaded))
     return compiled_loaded

@@ -34,8 +34,8 @@ def _notify_color(body: str) -> str:
 
 
 def notify(title: str, body: str) -> None:
-    clean_title = " ".join(title.split()).strip() or "Voice"
-    clean_body = " ".join(body.split()).strip()
+    clean_title = " ".join(title.split()) or "Voice"
+    clean_body = " ".join(body.split())
     if not clean_body:
         return
 

@@ -114,7 +114,6 @@ def _start_session(state_path: Path, preempt_fn: Callable[[], int], mode: str) -
             build_ffmpeg_wav_capture_cmd(audio_path),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            text=True,
         )
     except FileNotFoundError:
         notify("Voice", "ffmpeg not found")
@@ -230,10 +229,7 @@ def start_press_hold_command() -> int:
 
 
 def stop_press_hold_command() -> int:
-    def _on_transcription(text: str, detected_language: str | None, language_probability: float | None) -> int:
-        return handle_command_text(text, language=detected_language, language_probability=language_probability)
-
-    return _stop_session(COMMAND_STATE_PATH, "command", _on_transcription)
+    return _stop_session(COMMAND_STATE_PATH, "command", handle_command_text)
 
 
 HOLD_INPUT_HANDLERS: dict[str, Callable[[], int]] = {
