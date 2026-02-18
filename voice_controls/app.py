@@ -7,7 +7,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 from typing import Callable
@@ -21,7 +20,6 @@ from .config import (
     DAEMON_RESPONSE_TIMEOUT,
     DAEMON_START_DELAY,
     DAEMON_START_RETRIES,
-    MODEL_NAME,
     DICTATE_STATE_PATH,
     LOCK_PATH,
     LOG_TRANSCRIPTS,
@@ -40,7 +38,7 @@ from .state_utils import (
     state_required_substrings,
     write_private_text,
 )
-from .stt import preload_models, transcribe, warm_model
+from .stt import preload_models, transcribe
 
 
 ALLOWED_INPUT_MODES = {"dictate-start", "dictate-stop", "command-start", "command-stop"}
@@ -386,7 +384,6 @@ def run_daemon() -> int:
         SOCKET_PATH.unlink(missing_ok=True)
 
     preload_models()
-    threading.Thread(target=warm_model, args=(MODEL_NAME,), daemon=True).start()
 
     LOGGER.info("Voice hotkey daemon listening socket=%s", SOCKET_PATH)
 

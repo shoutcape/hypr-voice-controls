@@ -115,13 +115,6 @@ def get_whisper_model(model_name: str) -> "FasterWhisperModel":
     raise RuntimeError(f"Could not load Whisper model '{model_name}' on any device. Attempts: {'; '.join(errors)}")
 
 
-def warm_model(model_name: str) -> None:
-    try:
-        get_whisper_model(model_name)
-    except Exception as exc:
-        LOGGER.warning("Model warmup failed name=%s err=%s", model_name, exc)
-
-
 def transcribe(audio_path: Path, language: str | None = None, mode: str = "command") -> tuple[str, str, float]:
     model = get_whisper_model(MODEL_NAME)
     transcribe_kwargs = {
