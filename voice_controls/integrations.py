@@ -1,24 +1,15 @@
 import subprocess
-import time
 import unicodedata
 import logging
 
 from .config import (
     DICTATION_ALLOW_NEWLINES,
     DICTATION_INJECTOR,
-    DICTATION_STRICT_TEXT,
     LOG_COMMAND_OUTPUT_MAX,
     NOTIFY_TIMEOUT_MS,
-    TTS_COOLDOWN_MS,
-    TTS_ENABLED,
-    TTS_MAX_CHARS,
 )
 from .logging_utils import LOGGER
 from .tooling import has_tool
-
-
-_LAST_TTS_AT = 0.0
-_LAST_TTS_TEXT = ""
 
 
 def _truncate(value: str) -> str:
@@ -38,54 +29,6 @@ def _notify_color(body: str) -> str:
     return "rgb(88ccff)"
 
 
-def speak_text(text: str) -> bool:
-    clean = " ".join(text.split()).strip()
-    if not clean:
-        return False
-
-    cmd: list[str] | None = None
-    if has_tool("spd-say"):
-        cmd = ["spd-say", clean]
-    elif has_tool("espeak"):
-        cmd = ["espeak", clean]
-
-    if not cmd:
-        return False
-
-    try:
-        subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        return True
-    except OSError as exc:
-        LOGGER.debug("TTS speak failed cmd=%s err=%s", cmd, exc)
-        return False
-
-
-def _speak_feedback(text: str) -> None:
-    if not TTS_ENABLED:
-        return
-
-    clean = " ".join(text.split()).strip()
-    if not clean:
-        return
-
-    capped = clean[:TTS_MAX_CHARS]
-    global _LAST_TTS_AT, _LAST_TTS_TEXT
-    now = time.time()
-    if capped == _LAST_TTS_TEXT and now - _LAST_TTS_AT < (TTS_COOLDOWN_MS / 1000.0):
-        return
-
-    if not speak_text(capped):
-        return
-    _LAST_TTS_AT = now
-    _LAST_TTS_TEXT = capped
-
-
 def notify(title: str, body: str) -> None:
     clean_title = " ".join(title.split()).strip() or "Voice"
     clean_body = " ".join(body.split()).strip()
@@ -101,7 +44,6 @@ def notify(title: str, body: str) -> None:
                 stderr=subprocess.DEVNULL,
                 timeout=2,
             )
-            _speak_feedback(clean_body)
             return
         except Exception as exc:
             LOGGER.debug("hyprctl notify failed: %s", exc)
@@ -125,7 +67,6 @@ def notify(title: str, body: str) -> None:
                 check=False,
                 timeout=2,
             )
-            _speak_feedback(clean_body)
         except Exception as exc:
             LOGGER.debug("notify-send failed: %s", exc)
 
@@ -210,10 +151,7 @@ def _sanitize_dictation_text(text: str) -> str:
     else:
         sanitized = " ".join(sanitized.split())
 
-    if DICTATION_STRICT_TEXT:
-        sanitized = sanitized.strip()
-
-    return sanitized
+    return sanitized.strip()
 
 
 def _dictation_debug_stats(text: str) -> dict[str, int]:

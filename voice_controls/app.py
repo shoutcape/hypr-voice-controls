@@ -36,7 +36,6 @@ from .integrations import (
     run_command,
 )
 from .logging_utils import LOGGER
-from .overlay import show_partial
 from .state_utils import (
     get_saved_dictation_language,
     is_capture_state_active_payload,
@@ -46,14 +45,7 @@ from .state_utils import (
 from .stt import dictation_model_name, is_model_loaded, preload_models, transcribe, warm_model
 
 
-INPUT_MODE_DESCRIPTIONS: dict[str, str] = {
-    "dictate-start": "Start press/hold dictation recording",
-    "dictate-stop": "Stop dictation hold, transcribe, and paste",
-    "command-start": "Start press/hold command recording",
-    "command-stop": "Stop command hold, transcribe, and execute action",
-}
-
-ALLOWED_INPUT_MODES = set(INPUT_MODE_DESCRIPTIONS)
+ALLOWED_INPUT_MODES = {"dictate-start", "dictate-stop", "command-start", "command-stop"}
 
 DAEMON_REQUEST_IDS = itertools.count(1)
 
@@ -422,7 +414,6 @@ HOLD_INPUT_HANDLERS: dict[str, Callable[[], int]] = {
 
 def handle_command_text(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
     clean = normalize(raw_text)
-    show_partial(clean)
     probability = language_probability if language_probability is not None else 0.0
     LOGGER.info(
         "Input source=%s language=%s probability=%.3f raw=%s normalized=%s",
@@ -499,67 +490,28 @@ def start_daemon(entry_script: Path | None = None) -> None:
         LOGGER.error("Could not start daemon process: %s", exc)
 
 
-def request_daemon(
-    input_mode: str,
-    *,
-    auto_start: bool = True,
-    entry_script: Path | None = None,
-    connect_timeout: float | None = None,
-    response_timeout: float | None = None,
-    retries: int | None = None,
-    start_delay: float | None = None,
-) -> int:
-    response = request_daemon_response(
-        input_mode,
-        auto_start=auto_start,
-        entry_script=entry_script,
-        connect_timeout=connect_timeout,
-        response_timeout=response_timeout,
-        retries=retries,
-        start_delay=start_delay,
-    )
-    rc_value = response.get("rc", 1)
-    if isinstance(rc_value, (int, float, str)):
-        return int(rc_value)
-    return 1
-
-
-def request_daemon_response(
-    input_mode: str,
-    *,
-    auto_start: bool = True,
-    entry_script: Path | None = None,
-    connect_timeout: float | None = None,
-    response_timeout: float | None = None,
-    retries: int | None = None,
-    start_delay: float | None = None,
-) -> dict[str, object]:
+def request_daemon(input_mode: str, *, entry_script: Path | None = None) -> int:
     payload = json.dumps({"input": input_mode}).encode("utf-8") + b"\n"
-    active_connect_timeout = DAEMON_CONNECT_TIMEOUT if connect_timeout is None else max(0.01, connect_timeout)
-    active_response_timeout = DAEMON_RESPONSE_TIMEOUT if response_timeout is None else max(0.01, response_timeout)
-    active_retries = DAEMON_START_RETRIES if retries is None else max(1, retries)
-    active_start_delay = DAEMON_START_DELAY if start_delay is None else max(0.0, start_delay)
 
-    for attempt in range(active_retries):
+    for attempt in range(DAEMON_START_RETRIES):
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(active_connect_timeout)
+                client.settimeout(DAEMON_CONNECT_TIMEOUT)
                 client.connect(str(SOCKET_PATH))
-                client.settimeout(active_response_timeout)
+                client.settimeout(DAEMON_RESPONSE_TIMEOUT)
                 client.sendall(payload)
                 data = _recv_json_line(client)
-            return data
+            rc_value = data.get("rc", 1)
+            return int(rc_value) if isinstance(rc_value, (int, float, str)) else 1
         except (FileNotFoundError, ConnectionRefusedError, socket.timeout, json.JSONDecodeError, ValueError, OSError):
-            if not auto_start:
-                return {"rc": 1}
             if attempt == 0:
                 start_daemon(entry_script=entry_script)
-            if attempt < active_retries - 1:
-                time.sleep(active_start_delay)
+            if attempt < DAEMON_START_RETRIES - 1:
+                time.sleep(DAEMON_START_DELAY)
 
     LOGGER.error("Could not reach voice-hotkey daemon after retries")
     notify("Voice", "Voice daemon unavailable")
-    return {"rc": 1}
+    return 1
 
 
 def _parse_daemon_request(conn: socket.socket) -> dict | None:
