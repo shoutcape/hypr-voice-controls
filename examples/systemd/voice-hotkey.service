@@ -10,9 +10,6 @@ RestartSec=1
 Environment=VOICE_AUDIO_BACKEND=pulse
 Environment=VOICE_AUDIO_SOURCE=default
 Environment=VOICE_MODEL=large-v3-turbo
-Environment=VOICE_ASR_BACKEND=faster_whisper
-# Environment=VOICE_ASR_BACKEND=whispercpp_server
-# Environment=VOICE_WHISPER_SERVER_URL=http://127.0.0.1:8080/inference
 Environment=VOICE_NOTIFY_TIMEOUT_MS=2200
 
 [Install]

@@ -56,7 +56,4 @@ NOTIFY_TIMEOUT_MS = env_int("VOICE_NOTIFY_TIMEOUT_MS", 2200)
 
 VENV_PYTHON = Path.home() / ".venvs" / "voice" / "bin" / "python"
 
-ASR_BACKEND = os.environ.get("VOICE_ASR_BACKEND", "faster_whisper").strip().lower()
-WHISPER_SERVER_URL = os.environ.get("VOICE_WHISPER_SERVER_URL", "http://127.0.0.1:8080/inference").strip()
-WHISPER_SERVER_TIMEOUT = env_int("VOICE_WHISPER_SERVER_TIMEOUT", 90)
 DICTATION_ALLOW_NEWLINES = env_bool("VOICE_DICTATION_ALLOW_NEWLINES", False)

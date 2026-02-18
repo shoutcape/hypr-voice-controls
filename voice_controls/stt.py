@@ -4,9 +4,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .asr_whispercpp import transcribe_file as transcribe_with_whisper_server
 from .config import (
-    ASR_BACKEND,
     COMPUTE_TYPE_OVERRIDE,
     DEVICE_CANDIDATES,
     MODEL_NAME,
@@ -118,8 +116,6 @@ def get_whisper_model(model_name: str) -> "FasterWhisperModel":
 
 
 def warm_model(model_name: str) -> None:
-    if ASR_BACKEND == "whispercpp_server":
-        return
     try:
         get_whisper_model(model_name)
     except Exception as exc:
@@ -127,9 +123,6 @@ def warm_model(model_name: str) -> None:
 
 
 def transcribe(audio_path: Path, language: str | None = None, mode: str = "command") -> tuple[str, str, float]:
-    if ASR_BACKEND == "whispercpp_server":
-        return transcribe_with_whisper_server(audio_path=audio_path, language=language)
-
     model = get_whisper_model(MODEL_NAME)
     transcribe_kwargs = {
         "language": language,
@@ -152,8 +145,6 @@ def transcribe(audio_path: Path, language: str | None = None, mode: str = "comma
 
 
 def preload_models() -> None:
-    if ASR_BACKEND == "whispercpp_server":
-        return
     try:
         get_whisper_model(MODEL_NAME)
     except Exception as exc:
