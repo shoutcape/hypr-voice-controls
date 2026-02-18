@@ -14,7 +14,6 @@ class CommandSpec:
     label: str
 
 USER_COMMANDS_PATH = Path.home() / ".config" / "hypr" / "voice-commands.json"
-_USER_COMMANDS_CACHE: list[CommandSpec] = []
 _USER_COMPILED_CACHE: list[tuple[re.Pattern[str], CommandSpec]] = []
 _USER_COMMANDS_MTIME_NS: int | None = None
 _USER_COMMANDS_LOCK = threading.RLock()
@@ -22,20 +21,19 @@ MAX_COMMAND_PATTERN_LENGTH = 300
 MAX_NORMALIZED_INPUT_LENGTH = 160
 
 
-def _load_user_commands() -> tuple[list[CommandSpec], list[tuple[re.Pattern[str], CommandSpec]]]:
+def _load_user_commands() -> list[tuple[re.Pattern[str], CommandSpec]]:
     try:
         payload = json.loads(USER_COMMANDS_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return [], []
+        return []
     except Exception as exc:
         LOGGER.error("Failed to read user voice commands path=%s err=%s", USER_COMMANDS_PATH, exc)
-        return [], []
+        return []
 
     if not isinstance(payload, list):
         LOGGER.error("Invalid user voice commands format path=%s expected=list", USER_COMMANDS_PATH)
-        return [], []
+        return []
 
-    loaded: list[CommandSpec] = []
     compiled_loaded: list[tuple[re.Pattern[str], CommandSpec]] = []
     for index, item in enumerate(payload):
         if not isinstance(item, dict):
@@ -73,22 +71,20 @@ def _load_user_commands() -> tuple[list[CommandSpec], list[tuple[re.Pattern[str]
             continue
 
         spec = CommandSpec(pattern=pattern, argv=argv, label=label)
-        loaded.append(spec)
         compiled_loaded.append((compiled, spec))
 
-    LOGGER.info("Loaded user voice commands path=%s count=%s", USER_COMMANDS_PATH, len(loaded))
-    return loaded, compiled_loaded
+    LOGGER.info("Loaded user voice commands path=%s count=%s", USER_COMMANDS_PATH, len(compiled_loaded))
+    return compiled_loaded
 
 
 def _ensure_user_commands_cache() -> None:
-    global _USER_COMMANDS_CACHE, _USER_COMPILED_CACHE, _USER_COMMANDS_MTIME_NS
+    global _USER_COMPILED_CACHE, _USER_COMMANDS_MTIME_NS
 
     with _USER_COMMANDS_LOCK:
         try:
             stat = USER_COMMANDS_PATH.stat()
         except FileNotFoundError:
             if _USER_COMMANDS_MTIME_NS is not None:
-                _USER_COMMANDS_CACHE = []
                 _USER_COMPILED_CACHE = []
                 _USER_COMMANDS_MTIME_NS = None
                 LOGGER.info("User voice commands file removed path=%s", USER_COMMANDS_PATH)
@@ -101,7 +97,7 @@ def _ensure_user_commands_cache() -> None:
         if _USER_COMMANDS_MTIME_NS == mtime_ns:
             return
 
-        _USER_COMMANDS_CACHE, _USER_COMPILED_CACHE = _load_user_commands()
+        _USER_COMPILED_CACHE = _load_user_commands()
         _USER_COMMANDS_MTIME_NS = mtime_ns
 
 

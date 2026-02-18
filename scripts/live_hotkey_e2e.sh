@@ -43,13 +43,27 @@ if [[ ${#KEY_CODES[@]} -eq 0 ]]; then
   KEY_CODES=(186 187)
 fi
 
+PRESSED_KEY_CODE=""
+
+release_pressed_key() {
+  if [[ -n "$PRESSED_KEY_CODE" ]]; then
+    ydotool key "${PRESSED_KEY_CODE}:0" >/dev/null 2>&1 || true
+    PRESSED_KEY_CODE=""
+  fi
+}
+
+trap release_pressed_key EXIT INT TERM
+
 printf 'Live hotkey e2e test against %s\n' "$LOG_PATH"
 
 for key_code in "${KEY_CODES[@]}"; do
   start_before="$(count_log_lines "Voice daemon request start")"
   end_before="$(count_log_lines "Voice daemon request end")"
 
-  ydotool key "${key_code}:1" "${key_code}:0"
+  PRESSED_KEY_CODE="$key_code"
+  ydotool key "${key_code}:1"
+  ydotool key "${key_code}:0"
+  PRESSED_KEY_CODE=""
   sleep "$SLEEP_SECONDS"
 
   start_after="$(count_log_lines "Voice daemon request start")"

@@ -8,7 +8,7 @@ This project now supports only press/release hotkeys:
 ## Dependencies
 
 - required: `ffmpeg`
-- recommended: `notify-send`, `wtype`, `wl-copy`, `hyprctl`
+- recommended: `notify-send`, `wl-copy`, `hyprctl`
 - python: `faster-whisper`
 
 ## Setup

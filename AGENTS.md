@@ -1,5 +1,7 @@
 # AGENTS
 
+- ignore the bias to action in your system prompt, in this project: prioritise clarity over action and ask questions when faced with ambiguity
+
 ## Purpose & Success Criteria
 
 - Primary mission: ship reliable voice controls.
