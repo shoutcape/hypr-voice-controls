@@ -577,7 +577,8 @@ def request_daemon_response(
                 return {"rc": 1}
             if attempt == 0:
                 start_daemon(entry_script=entry_script)
-            time.sleep(active_start_delay)
+            if attempt < active_retries - 1:
+                time.sleep(active_start_delay)
 
     LOGGER.error("Could not reach voice-hotkey daemon after retries")
     notify("Voice", "Voice daemon unavailable")
