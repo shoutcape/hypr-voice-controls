@@ -57,19 +57,6 @@ ALLOWED_INPUT_MODES = set(INPUT_MODE_DESCRIPTIONS)
 
 DAEMON_REQUEST_IDS = itertools.count(1)
 
-LEGACY_INPUT_ALIASES: dict[str, str] = {}
-
-
-def _normalize_input_mode(input_mode: str) -> str:
-    mapped = LEGACY_INPUT_ALIASES.get(input_mode, input_mode)
-    if mapped != input_mode:
-        LOGGER.info("Normalized legacy input=%s to input=%s", input_mode, mapped)
-    return mapped
-
-
-def _resolve_admission_class(input_mode: str) -> str:
-    return "direct"
-
 
 def _sanitize_transcript(value: str) -> str:
     if LOG_TRANSCRIPTS:
@@ -480,19 +467,19 @@ def parse_args() -> argparse.Namespace:
 
 
 def _handle_hold_input(input_mode: str) -> int | None:
-    if input_mode == "dictate-start":
-        return start_press_hold_dictation()
-    if input_mode == "dictate-stop":
-        return stop_press_hold_dictation()
-    if input_mode == "command-start":
-        return start_press_hold_command()
-    if input_mode == "command-stop":
-        return stop_press_hold_command()
-    return None
+    handlers: dict[str, Callable[[], int]] = {
+        "dictate-start": start_press_hold_dictation,
+        "dictate-stop": stop_press_hold_dictation,
+        "command-start": start_press_hold_command,
+        "command-stop": stop_press_hold_command,
+    }
+    handler = handlers.get(input_mode)
+    if handler is None:
+        return None
+    return handler()
 
 
 def handle_input(input_mode: str) -> int:
-    input_mode = _normalize_input_mode(input_mode)
     if input_mode not in ALLOWED_INPUT_MODES:
         LOGGER.warning("Rejected unsupported input mode: %r", input_mode)
         return 2
@@ -597,22 +584,19 @@ def _parse_daemon_request(conn: socket.socket) -> dict | None:
 def _execute_daemon_request(request: dict) -> int:
     request_id = next(DAEMON_REQUEST_IDS)
     started_at = time.time()
-    input_mode = _normalize_input_mode(request.get("input", "command-start"))
-    admission_class = _resolve_admission_class(input_mode)
+    input_mode = request.get("input", "command-start")
     if input_mode not in ALLOWED_INPUT_MODES:
         LOGGER.warning(
-            "Rejected invalid daemon input=%r request_id=%s admission=%s",
+            "Rejected invalid daemon input=%r request_id=%s",
             input_mode,
             request_id,
-            admission_class,
         )
         return 2
 
     LOGGER.info(
-        "Voice daemon request start id=%s input=%s admission=%s",
+        "Voice daemon request start id=%s input=%s",
         request_id,
         input_mode,
-        admission_class,
     )
 
     try:
@@ -630,10 +614,9 @@ def _execute_daemon_request(request: dict) -> int:
 
     elapsed_ms = int((time.time() - started_at) * 1000)
     LOGGER.info(
-        "Voice daemon request end id=%s input=%s admission=%s rc=%s duration_ms=%s",
+        "Voice daemon request end id=%s input=%s rc=%s duration_ms=%s",
         request_id,
         input_mode,
-        admission_class,
         rc,
         elapsed_ms,
     )
@@ -703,9 +686,8 @@ def run_daemon() -> int:
 
 def main(entry_script: Path | None = None) -> int:
     args = parse_args()
-    input_mode = _normalize_input_mode(args.input)
 
     if args.daemon:
         return run_daemon()
 
-    return request_daemon(input_mode, entry_script=entry_script)
+    return request_daemon(args.input, entry_script=entry_script)

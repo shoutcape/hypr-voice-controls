@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from .audio import pid_alive, pid_cmdline_contains
-from .config import LANGUAGE_PATH, STATE_MAX_AGE_SECONDS
+from .config import STATE_MAX_AGE_SECONDS
 from .logging_utils import LOGGER
 
 
@@ -76,12 +76,5 @@ def is_capture_state_active(state_path: Path, *, now: float | None = None) -> bo
 
 
 def get_saved_dictation_language() -> str:
-    # v1 is intentionally English-only; keep file access for forward compatibility.
-    try:
-        LANGUAGE_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        LOGGER.debug("Language file not found path=%s; defaulting to en", LANGUAGE_PATH)
-    except Exception as exc:
-        LOGGER.warning("Could not read language file: %s", exc)
+    # v1 is intentionally English-only.
     return "en"
-
