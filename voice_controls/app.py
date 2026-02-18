@@ -412,6 +412,14 @@ def stop_press_hold_command() -> int:
     )
 
 
+HOLD_INPUT_HANDLERS: dict[str, Callable[[], int]] = {
+    "dictate-start": start_press_hold_dictation,
+    "dictate-stop": stop_press_hold_dictation,
+    "command-start": start_press_hold_command,
+    "command-stop": stop_press_hold_command,
+}
+
+
 def handle_command_text(raw_text: str, source: str, language: str | None, language_probability: float | None) -> int:
     clean = normalize(raw_text)
     show_partial(clean)
@@ -466,29 +474,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _handle_hold_input(input_mode: str) -> int | None:
-    handlers: dict[str, Callable[[], int]] = {
-        "dictate-start": start_press_hold_dictation,
-        "dictate-stop": stop_press_hold_dictation,
-        "command-start": start_press_hold_command,
-        "command-stop": stop_press_hold_command,
-    }
-    handler = handlers.get(input_mode)
-    if handler is None:
-        return None
-    return handler()
-
-
 def handle_input(input_mode: str) -> int:
     if input_mode not in ALLOWED_INPUT_MODES:
         LOGGER.warning("Rejected unsupported input mode: %r", input_mode)
         return 2
-
-    hold_result = _handle_hold_input(input_mode)
-    if hold_result is None:
-        LOGGER.warning("Unsupported hold input mode=%s", input_mode)
-        return 2
-    return hold_result
+    return HOLD_INPUT_HANDLERS[input_mode]()
 
 
 def start_daemon(entry_script: Path | None = None) -> None:

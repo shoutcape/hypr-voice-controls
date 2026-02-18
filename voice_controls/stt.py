@@ -171,10 +171,7 @@ def transcribe(audio_path: Path, language: str | None = None, mode: str = "comma
 def preload_models() -> None:
     if ASR_BACKEND == "whispercpp_server":
         return
-    for model_name in {
-        COMMAND_MODEL_NAME,
-    }:
-        try:
-            get_whisper_model(model_name)
-        except Exception as exc:
-            LOGGER.warning("Model preload failed name=%s err=%s", model_name, exc)
+    try:
+        get_whisper_model(COMMAND_MODEL_NAME)
+    except Exception as exc:
+        LOGGER.warning("Model preload failed name=%s err=%s", COMMAND_MODEL_NAME, exc)

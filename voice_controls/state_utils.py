@@ -1,4 +1,3 @@
-import json
 import os
 import tempfile
 import time
@@ -61,18 +60,6 @@ def is_capture_state_active_payload(state: dict, *, now: float | None = None) ->
         return False
 
     return True
-
-
-def is_capture_state_active(state_path: Path, *, now: float | None = None) -> bool:
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return False
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        LOGGER.warning("Could not read capture state path=%s err=%s", state_path, exc)
-        return False
-
-    return is_capture_state_active_payload(state, now=now)
 
 
 def get_saved_dictation_language() -> str:
