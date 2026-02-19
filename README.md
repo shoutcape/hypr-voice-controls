@@ -2,9 +2,8 @@
 
 <!-- Responsibility: Primary setup and operations guide for the hotkey-only voice control stack. -->
 
-This project now supports only press/release hotkeys:
+This project supports press/release dictation hotkeys:
 
-- `command-start` / `command-stop`
 - `dictate-start` / `dictate-stop`
 
 Use `python -m voice_controls` as the launcher entrypoint.
@@ -27,16 +26,10 @@ PYTHON_BIN=~/.venvs/voice/bin/python
 ## Hyprland bindings
 
 ```conf
-# command mode
-bind  = SUPER, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input command-start
-bindr = SUPER, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input command-stop
-
 # dictation mode
-bind  = SUPER SHIFT, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-start
-bindr = SUPER SHIFT, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-stop
+bind  = SUPER, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-start
+bindr = SUPER, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-stop
 ```
-
-`examples/hypr/voice-commands.json` is the example spoken-command mapping file (`pattern` -> `argv`) loaded from `~/.config/hypr/voice-commands.json`.
 
 ## Systemd user service
 
@@ -52,10 +45,6 @@ systemctl --user status voice-hotkey.service --no-pager
 ## Manual smoke test
 
 ```bash
-PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input command-start
-sleep 1
-PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input command-stop
-
 PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-start
 sleep 1
 PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-stop
@@ -66,6 +55,6 @@ PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-stop
 This sends real key events via `ydotool` and verifies daemon request/response log activity.
 
 ```bash
-./scripts/live_hotkey_e2e.sh         # defaults to keycodes 186, 187 (F16/F17)
-./scripts/live_hotkey_e2e.sh 186 187 # explicit keycodes
+./scripts/live_hotkey_e2e.sh     # defaults to keycode 186 (F16)
+./scripts/live_hotkey_e2e.sh 186 # explicit keycode
 ```

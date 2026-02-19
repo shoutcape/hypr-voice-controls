@@ -1,4 +1,4 @@
-"""Responsibility: Integrate with desktop tools for notify, paste, and command execution."""
+"""Responsibility: Integrate with desktop tools for notify and dictation paste."""
 
 import shutil  # Standard-library shell utilities; shutil.which checks if a command exists in PATH.
 import subprocess  # Run desktop integration commands (hyprctl, wl-copy, notify-send).
@@ -7,25 +7,18 @@ from functools import lru_cache  # Cache function results (Least Recently Used s
 
 from .config import (  # Runtime settings controlling notify behavior and dictation sanitization.
     DICTATION_ALLOW_NEWLINES,
-    LOG_COMMAND_OUTPUT_MAX,
     NOTIFY_TIMEOUT_MS,
 )
 from .logging_utils import LOGGER  # Shared logger for integration successes/failures.
 
 NOTIFY_ERROR_SIGNALS = ("failed", "missing", "error", "unavailable", "no speech")
-NOTIFY_SUCCESS_SIGNALS = ("enabled", "disabled", "pasted", " -> ")
+NOTIFY_SUCCESS_SIGNALS = ("pasted",)
 
 
 @lru_cache(maxsize=None)
 def has_tool(tool: str) -> bool:
     # LRU means Least Recently Used; this memoizes tool checks to avoid repeated shutil.which calls.
     return shutil.which(tool) is not None
-
-
-def _truncate(value: str) -> str:
-    if len(value) <= LOG_COMMAND_OUTPUT_MAX:
-        return value
-    return f"{value[:LOG_COMMAND_OUTPUT_MAX]}..."
 
 
 def _notify_color(body: str) -> str:
@@ -163,25 +156,7 @@ def _inject_text_via_clipboard(text: str) -> bool:
         "Paste attempt failed cmd=%s rc=%s stdout=%s stderr=%s",
         cmd,
         proc.returncode,
-        _truncate(proc.stdout.strip()),
-        _truncate(proc.stderr.strip()),
+        proc.stdout.strip(),
+        proc.stderr.strip(),
     )
     return False
-
-
-def run_command(argv: list[str]) -> bool:
-    try:
-        proc = subprocess.run(argv, check=False, timeout=8, capture_output=True, text=True)
-    except Exception as exc:
-        LOGGER.error("Command execution failed argv=%s err=%s", argv, exc)
-        return False
-
-    if proc.returncode != 0:
-        LOGGER.error(
-            "Command failed rc=%s argv=%s stdout=%s stderr=%s",
-            proc.returncode,
-            argv,
-            _truncate(proc.stdout.strip()),
-            _truncate(proc.stderr.strip()),
-        )
-    return proc.returncode == 0

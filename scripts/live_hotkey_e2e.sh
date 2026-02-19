@@ -42,7 +42,7 @@ PY
 
 KEY_CODES=("$@")
 if [[ ${#KEY_CODES[@]} -eq 0 ]]; then
-  KEY_CODES=(186 187)
+  KEY_CODES=(186)
 fi
 
 PRESSED_KEY_CODE=""
@@ -71,7 +71,6 @@ PY
 }
 
 cleanup_sessions() {
-  send_daemon_input command-stop >/dev/null 2>&1 || true
   send_daemon_input dictate-stop >/dev/null 2>&1 || true
 }
 

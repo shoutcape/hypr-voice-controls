@@ -10,8 +10,6 @@ from voice_controls import app  # Module under test.
 class Phase0GuardrailTests(unittest.TestCase):
     def test_input_handlers_include_core_contract(self) -> None:
         expected = {
-            "command-start",
-            "command-stop",
             "dictate-start",
             "dictate-stop",
         }
@@ -31,8 +29,8 @@ class Phase0GuardrailTests(unittest.TestCase):
 
     def test_execute_daemon_request_returns_1_on_handler_exception(self) -> None:
         mock_handler = Mock(side_effect=RuntimeError("boom"))
-        with patch.dict(app.HOLD_INPUT_HANDLERS, {"command-start": mock_handler}, clear=True):
-            rc = app._execute_daemon_request({"input": "command-start"})
+        with patch.dict(app.HOLD_INPUT_HANDLERS, {"dictate-start": mock_handler}, clear=True):
+            rc = app._execute_daemon_request({"input": "dictate-start"})
         self.assertEqual(rc, 1)
 
     def test_execute_daemon_request_returns_2_when_input_missing(self) -> None:
@@ -47,6 +45,13 @@ class Phase0GuardrailTests(unittest.TestCase):
 
         self.assertEqual(rc, 7)
         mock_request_daemon.assert_called_once_with("dictate-stop")
+
+    def test_main_uses_dictate_start_by_default(self) -> None:
+        with patch("sys.argv", ["voice_controls"]), patch("voice_controls.app.request_daemon", return_value=5) as mock_request_daemon:
+            rc = app.main()
+
+        self.assertEqual(rc, 5)
+        mock_request_daemon.assert_called_once_with("dictate-start")
 
     def test_main_daemon_flag_routes_to_run_daemon(self) -> None:
         with patch("sys.argv", ["voice_controls", "--daemon"]), patch("voice_controls.app.run_daemon", return_value=0) as mock_run_daemon:

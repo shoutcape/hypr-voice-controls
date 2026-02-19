@@ -117,22 +117,13 @@ def get_whisper_model(model_name: str) -> "FasterWhisperModel":
     raise RuntimeError(f"Could not load Whisper model '{model_name}' on any device. Attempts: {'; '.join(errors)}")
 
 
-def transcribe(audio_path: Path, language: str | None = None, mode: str = "command") -> tuple[str, str, float]:
+def transcribe(audio_path: Path, language: str | None = None) -> tuple[str, str, float]:
     model = get_whisper_model(MODEL_NAME)
     transcribe_kwargs = {
         "language": language,
         "vad_filter": True,
         "without_timestamps": True,
     }
-    if mode == "command":
-        transcribe_kwargs.update(
-            {
-                "beam_size": 1,
-                "best_of": 1,
-                "temperature": 0.0,
-                "condition_on_previous_text": False,
-            }
-        )
 
     segments, info = model.transcribe(str(audio_path), **transcribe_kwargs)
     text = " ".join(segment.text.strip() for segment in segments).strip()

@@ -44,7 +44,6 @@ AUDIO_SOURCE = os.environ.get("VOICE_AUDIO_SOURCE", "default")
 LOG_PATH = Path.home() / ".local" / "state" / "voice-hotkey.log"
 SOCKET_PATH = Path.home() / ".local" / "state" / "voice-hotkey.sock"
 DICTATE_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-dictate.json"
-COMMAND_STATE_PATH = Path.home() / ".local" / "state" / "voice-hotkey-command.json"
 LOCK_PATH = Path.home() / ".local" / "state" / "voice-hotkey.lock"
 DAEMON_CONNECT_TIMEOUT = env_float("VOICE_DAEMON_CONNECT_TIMEOUT", 0.4)
 DAEMON_RESPONSE_TIMEOUT = env_int("VOICE_DAEMON_RESPONSE_TIMEOUT", 180)
@@ -53,7 +52,6 @@ DAEMON_START_DELAY = env_float("VOICE_DAEMON_START_DELAY", 0.1)
 DAEMON_MAX_REQUEST_BYTES = env_int("VOICE_DAEMON_MAX_REQUEST_BYTES", 8192)
 STATE_MAX_AGE_SECONDS = env_int("VOICE_STATE_MAX_AGE_SECONDS", 900)
 LOG_TRANSCRIPTS = env_bool("VOICE_LOG_TRANSCRIPTS", False)
-LOG_COMMAND_OUTPUT_MAX = env_int("VOICE_LOG_COMMAND_OUTPUT_MAX", 300)
 NOTIFY_TIMEOUT_MS = env_int("VOICE_NOTIFY_TIMEOUT_MS", 2200)
 
 VENV_PYTHON = Path.home() / ".venvs" / "voice" / "bin" / "python"
