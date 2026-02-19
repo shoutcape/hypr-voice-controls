@@ -19,7 +19,6 @@ jobs:
       - name: Syntax checks
         run: |
           python3 -m py_compile \
-            hvc \
             voice_controls/*.py
 
       - name: Unit tests

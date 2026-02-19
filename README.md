@@ -5,7 +5,7 @@ This project now supports only press/release hotkeys:
 - `command-start` / `command-stop`
 - `dictate-start` / `dictate-stop`
 
-Use `hvc` as the launcher entrypoint.
+Use `python -m voice_controls` as the launcher entrypoint.
 
 ## Dependencies
 
@@ -19,18 +19,19 @@ Use `hvc` as the launcher entrypoint.
 python -m venv ~/.venvs/voice
 ~/.venvs/voice/bin/pip install -U pip
 ~/.venvs/voice/bin/pip install faster-whisper
+PYTHON_BIN=~/.venvs/voice/bin/python
 ```
 
 ## Hyprland bindings
 
 ```conf
 # command mode
-bind  = SUPER, V, exec, <REPO_DIR>/hvc --input command-start
-bindr = SUPER, V, exec, <REPO_DIR>/hvc --input command-stop
+bind  = SUPER, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input command-start
+bindr = SUPER, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input command-stop
 
 # dictation mode
-bind  = SUPER SHIFT, V, exec, <REPO_DIR>/hvc --input dictate-start
-bindr = SUPER SHIFT, V, exec, <REPO_DIR>/hvc --input dictate-stop
+bind  = SUPER SHIFT, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-start
+bindr = SUPER SHIFT, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-stop
 ```
 
 ## Systemd user service
@@ -47,13 +48,13 @@ systemctl --user status voice-hotkey.service --no-pager
 ## Manual smoke test
 
 ```bash
-<REPO_DIR>/hvc --input command-start
+PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input command-start
 sleep 1
-<REPO_DIR>/hvc --input command-stop
+PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input command-stop
 
-<REPO_DIR>/hvc --input dictate-start
+PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-start
 sleep 1
-<REPO_DIR>/hvc --input dictate-stop
+PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-stop
 ```
 
 ## Live hotkey e2e test

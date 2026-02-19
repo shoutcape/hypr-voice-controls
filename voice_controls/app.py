@@ -2,6 +2,7 @@ import argparse
 import fcntl
 import itertools
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -288,24 +289,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def start_daemon(entry_script: Path | None = None) -> None:
+def start_daemon() -> None:
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
     runtime_python = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
-    script_path = entry_script if entry_script is not None else Path(sys.argv[0]).resolve()
+    repo_root = str(Path(__file__).resolve().parents[1])
+    env = os.environ.copy()
+    current_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = repo_root if not current_pythonpath else f"{repo_root}:{current_pythonpath}"
 
     try:
         subprocess.Popen(
-            [runtime_python, str(script_path), "--daemon"],
+            [runtime_python, "-m", "voice_controls", "--daemon"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=env,
         )
     except Exception as exc:
         LOGGER.error("Could not start daemon process: %s", exc)
 
 
-def request_daemon(input_mode: str, *, entry_script: Path | None = None) -> int:
+def request_daemon(input_mode: str) -> int:
     payload = json.dumps({"input": input_mode}).encode("utf-8") + b"\n"
 
     for attempt in range(DAEMON_START_RETRIES):
@@ -320,7 +325,7 @@ def request_daemon(input_mode: str, *, entry_script: Path | None = None) -> int:
             return int(rc_value) if isinstance(rc_value, (int, float, str)) else 1
         except (FileNotFoundError, ConnectionRefusedError, socket.timeout, json.JSONDecodeError, ValueError, OSError):
             if attempt == 0:
-                start_daemon(entry_script=entry_script)
+                start_daemon()
             if attempt < DAEMON_START_RETRIES - 1:
                 time.sleep(DAEMON_START_DELAY)
 
@@ -413,10 +418,10 @@ def run_daemon() -> int:
     return 0
 
 
-def main(entry_script: Path | None = None) -> int:
+def main() -> int:
     args = parse_args()
 
     if args.daemon:
         return run_daemon()
 
-    return request_daemon(args.input, entry_script=entry_script)
+    return request_daemon(args.input)
