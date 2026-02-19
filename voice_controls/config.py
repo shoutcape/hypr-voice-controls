@@ -1,5 +1,7 @@
-import os
-from pathlib import Path
+"""Responsibility: Centralize environment-driven runtime configuration constants."""
+
+import os  # Read environment variables for runtime configuration.
+from pathlib import Path  # Construct standard state/log/socket file paths.
 
 
 def env_int(name: str, default: int) -> int:

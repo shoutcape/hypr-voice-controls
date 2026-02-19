@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Responsibility: Run local pre-release guardrails (syntax, unit tests, live hotkey e2e).
 set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"

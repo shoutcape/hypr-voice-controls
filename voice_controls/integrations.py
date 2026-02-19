@@ -1,14 +1,16 @@
-import shutil
-import subprocess
-import unicodedata
-from functools import lru_cache
+"""Responsibility: Integrate with desktop tools for notify, paste, and command execution."""
 
-from .config import (
+import shutil  # Standard-library shell utilities; shutil.which checks if a command exists in PATH.
+import subprocess  # Run desktop integration commands (hyprctl, wl-copy, notify-send).
+import unicodedata  # Inspect Unicode categories while sanitizing dictated text.
+from functools import lru_cache  # Cache function results (Least Recently Used strategy).
+
+from .config import (  # Runtime settings controlling notify behavior and dictation sanitization.
     DICTATION_ALLOW_NEWLINES,
     LOG_COMMAND_OUTPUT_MAX,
     NOTIFY_TIMEOUT_MS,
 )
-from .logging_utils import LOGGER
+from .logging_utils import LOGGER  # Shared logger for integration successes/failures.
 
 NOTIFY_ERROR_SIGNALS = ("failed", "missing", "error", "unavailable", "no speech")
 NOTIFY_SUCCESS_SIGNALS = ("enabled", "disabled", "pasted", " -> ")
@@ -16,6 +18,7 @@ NOTIFY_SUCCESS_SIGNALS = ("enabled", "disabled", "pasted", " -> ")
 
 @lru_cache(maxsize=None)
 def has_tool(tool: str) -> bool:
+    # LRU means Least Recently Used; this memoizes tool checks to avoid repeated shutil.which calls.
     return shutil.which(tool) is not None
 
 

@@ -1,8 +1,10 @@
-import unittest
-from pathlib import Path
-from unittest.mock import Mock, patch
+"""Responsibility: Guardrail tests for daemon input contract and launcher wiring."""
 
-from voice_controls import app
+import unittest  # Built-in unit test framework.
+from pathlib import Path  # Resolve repository paths for launcher assertions.
+from unittest.mock import Mock, patch  # Replace functions and assert call behavior.
+
+from voice_controls import app  # Module under test.
 
 
 class Phase0GuardrailTests(unittest.TestCase):

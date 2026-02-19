@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
+# Responsibility: Send real key events and assert daemon request/response log activity.
 set -euo pipefail
 
 LOG_PATH="${LOG_PATH:-$HOME/.local/state/voice-hotkey.log}"
+SOCKET_PATH="${SOCKET_PATH:-$HOME/.local/state/voice-hotkey.sock}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-1.0}"
 MIN_DELTA="${MIN_DELTA:-1}"
 
@@ -45,6 +47,34 @@ fi
 
 PRESSED_KEY_CODE=""
 
+send_daemon_input() {
+  python3 - "$SOCKET_PATH" "$1" <<'PY'
+import json
+import socket
+import sys
+
+socket_path = sys.argv[1]
+input_mode = sys.argv[2]
+payload = json.dumps({"input": input_mode}).encode("utf-8") + b"\n"
+
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    client.settimeout(2)
+    client.connect(socket_path)
+    client.sendall(payload)
+    data = client.recv(1024)
+
+line = data.split(b"\n", 1)[0]
+response = json.loads(line.decode("utf-8"))
+rc = response.get("rc", 1)
+raise SystemExit(int(rc) if isinstance(rc, (int, float, str)) else 1)
+PY
+}
+
+cleanup_sessions() {
+  send_daemon_input command-stop >/dev/null 2>&1 || true
+  send_daemon_input dictate-stop >/dev/null 2>&1 || true
+}
+
 release_pressed_key() {
   if [[ -n "$PRESSED_KEY_CODE" ]]; then
     ydotool key "${PRESSED_KEY_CODE}:0" >/dev/null 2>&1 || true
@@ -52,7 +82,14 @@ release_pressed_key() {
   fi
 }
 
-trap release_pressed_key EXIT INT TERM
+on_exit() {
+  release_pressed_key
+  cleanup_sessions
+}
+
+trap on_exit EXIT INT TERM
+
+cleanup_sessions
 
 printf 'Live hotkey e2e test against %s\n' "$LOG_PATH"
 
@@ -79,5 +116,7 @@ for key_code in "${KEY_CODES[@]}"; do
     exit 1
   fi
 done
+
+cleanup_sessions
 
 printf 'PASS: all keycodes produced daemon request/response activity\n'

@@ -1,7 +1,9 @@
-import logging
-import os
+"""Responsibility: Configure and expose the shared file-backed project logger."""
 
-from .config import LOG_PATH
+import logging  # Python logging framework for structured file logs.
+import os  # Apply restrictive file permissions to log output.
+
+from .config import LOG_PATH  # Central path where project logs are written.
 
 
 def setup_logger() -> logging.Logger:

@@ -1,18 +1,20 @@
-import ctypes
-import os
-import threading
-from pathlib import Path
-from typing import TYPE_CHECKING
+"""Responsibility: Manage Speech-to-Text (STT) model loading, GPU runtime setup, and transcription."""
 
-from .config import (
+import ctypes  # Preload CUDA shared libraries explicitly when needed.
+import os  # Update LD_LIBRARY_PATH for runtime library resolution.
+import threading  # Guard shared Whisper model cache across threads.
+from pathlib import Path  # File path type for audio files and library paths.
+from typing import TYPE_CHECKING  # Import heavy typing-only deps without runtime cost.
+
+from .config import (  # Model/device/compute configuration values.
     COMPUTE_TYPE_OVERRIDE,
     DEVICE_CANDIDATES,
     MODEL_NAME,
 )
-from .logging_utils import LOGGER
+from .logging_utils import LOGGER  # Shared logger for model loading/transcription diagnostics.
 
 if TYPE_CHECKING:
-    from faster_whisper import WhisperModel as FasterWhisperModel  # type: ignore[import-not-found]
+    from faster_whisper import WhisperModel as FasterWhisperModel  # type: ignore[import-not-found]  # Type-only import for Whisper model annotations.
 
 
 WHISPER_MODELS: dict[tuple[str, str, str], "FasterWhisperModel"] = {}
@@ -23,14 +25,14 @@ def ensure_cuda_runtime_paths() -> None:
     lib_dirs = []
 
     try:
-        import nvidia.cublas.lib  # type: ignore
+        import nvidia.cublas.lib  # type: ignore  # Locate CUDA BLAS runtime libraries from pip wheels.
 
         lib_dirs.append(list(nvidia.cublas.lib.__path__)[0])
     except Exception as exc:
         LOGGER.warning("Could not detect nvidia.cublas.lib path: %s", exc)
 
     try:
-        import nvidia.cudnn.lib  # type: ignore
+        import nvidia.cudnn.lib  # type: ignore  # Locate cuDNN runtime libraries from pip wheels.
 
         lib_dirs.append(list(nvidia.cudnn.lib.__path__)[0])
     except Exception as exc:
@@ -76,7 +78,7 @@ def compute_type_for_device(device: str) -> str:
 
 
 def get_whisper_model(model_name: str) -> "FasterWhisperModel":
-    from faster_whisper import WhisperModel  # type: ignore[import-not-found]
+    from faster_whisper import WhisperModel  # type: ignore[import-not-found]  # Runtime import to avoid startup cost until transcription is needed.
 
     errors = []
     for device in DEVICE_CANDIDATES:

@@ -1,10 +1,12 @@
-import os
-import signal
-import time
-from pathlib import Path
+"""Responsibility: Audio capture command construction and recorder process lifecycle control."""
 
-from .config import AUDIO_BACKEND, AUDIO_SOURCE
-from .logging_utils import LOGGER
+import os  # Send process signals and use low-level process utilities.
+import signal  # Signal constants (SIGINT/SIGTERM/SIGKILL) for recorder shutdown.
+import time  # Poll with timeouts while waiting for process exit.
+from pathlib import Path  # Access /proc and output paths with path objects.
+
+from .config import AUDIO_BACKEND, AUDIO_SOURCE  # Audio input backend/source configuration values.
+from .logging_utils import LOGGER  # Shared logger for audio process lifecycle events.
 
 
 def build_ffmpeg_wav_capture_cmd(output_path: Path) -> list[str]:

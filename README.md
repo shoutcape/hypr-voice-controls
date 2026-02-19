@@ -1,5 +1,7 @@
 # Hypr Voice Controls (Hotkey Only)
 
+<!-- Responsibility: Primary setup and operations guide for the hotkey-only voice control stack. -->
+
 This project now supports only press/release hotkeys:
 
 - `command-start` / `command-stop`
@@ -33,6 +35,8 @@ bindr = SUPER, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls
 bind  = SUPER SHIFT, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-start
 bindr = SUPER SHIFT, V, exec, env PYTHONPATH=<REPO_DIR> <PYTHON_BIN> -m voice_controls --input dictate-stop
 ```
+
+`examples/hypr/voice-commands.json` is the example spoken-command mapping file (`pattern` -> `argv`) loaded from `~/.config/hypr/voice-commands.json`.
 
 ## Systemd user service
 

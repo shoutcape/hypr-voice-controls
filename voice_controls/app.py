@@ -1,20 +1,22 @@
-import argparse
-import fcntl
-import itertools
-import json
-import os
-import shutil
-import socket
-import subprocess
-import sys
-import tempfile
-import time
-from pathlib import Path
-from typing import Callable
+"""Responsibility: Orchestrate hotkey sessions, command handling, and daemon IPC."""
 
-from .audio import build_ffmpeg_wav_capture_cmd, pid_alive, stop_recording_pid
-from .commands import match_command, normalize
-from .config import (
+import argparse  # Parse CLI flags like --input and --daemon.
+import fcntl  # Use advisory file locks to keep one daemon instance.
+import itertools  # Provide monotonic request IDs via count().
+import json  # Encode/decode daemon request and response payloads.
+import os  # Read and extend environment variables when spawning daemon.
+import shutil  # Check required/optional external tools with shutil.which.
+import socket  # Handle local UNIX socket client/server communication.
+import subprocess  # Start ffmpeg capture and background daemon processes.
+import sys  # Access current Python executable as runtime fallback.
+import tempfile  # Create temporary directories for per-hold recordings.
+import time  # Measure durations and implement retry/backoff timing.
+from pathlib import Path  # Build filesystem paths safely and clearly.
+from typing import Callable  # Type hint callback handlers.
+
+from .audio import build_ffmpeg_wav_capture_cmd, pid_alive, stop_recording_pid  # Audio capture command and recorder lifecycle helpers.
+from .commands import match_command, normalize  # Normalize speech text and resolve matching command rules.
+from .config import (  # Central runtime constants and tunables.
     COMMAND_STATE_PATH,
     DAEMON_CONNECT_TIMEOUT,
     DAEMON_MAX_REQUEST_BYTES,
@@ -28,14 +30,14 @@ from .config import (
     STATE_MAX_AGE_SECONDS,
     VENV_PYTHON,
 )
-from .integrations import (
+from .integrations import (  # Desktop side effects (notify, paste, execute command).
     inject_text_into_focused_input,
     notify,
     run_command,
 )
-from .logging_utils import LOGGER
-from .state_utils import write_private_text
-from .stt import preload_models, transcribe
+from .logging_utils import LOGGER  # Shared file-backed logger.
+from .state_utils import write_private_text  # Atomic private state file writes.
+from .stt import preload_models, transcribe  # Speech-to-Text model preload and transcription.
 
 
 DAEMON_REQUEST_IDS = itertools.count(1)

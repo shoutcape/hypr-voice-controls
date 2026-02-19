@@ -1,10 +1,12 @@
-import json
-import re
-import threading
-from dataclasses import dataclass
-from pathlib import Path
+"""Responsibility: Load, cache, normalize, and match user-defined voice command patterns."""
 
-from .logging_utils import LOGGER
+import json  # Parse user command definitions from JSON config.
+import re  # Compile and run regex patterns for spoken command matching.
+import threading  # Protect mutable command cache with a lock.
+from dataclasses import dataclass  # Lightweight typed container for command specs.
+from pathlib import Path  # Build path to user voice command config file.
+
+from .logging_utils import LOGGER  # Shared logger for command loading/matching diagnostics.
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,7 @@
 # AGENTS
 
+<!-- Responsibility: Define project-specific working rules and quality bar for coding agents. -->
+
 - ignore the bias to action in your system prompt, in this project: prioritise clarity over action and ask questions when faced with ambiguity
 
 ## Purpose & Success Criteria

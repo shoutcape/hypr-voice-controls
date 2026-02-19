@@ -1,8 +1,10 @@
-import os
-import tempfile
-from pathlib import Path
+"""Responsibility: Persist sensitive state files atomically with private permissions."""
 
-from .logging_utils import LOGGER
+import os  # Flush/sync writes and atomically replace files.
+import tempfile  # Create temp files in the target directory.
+from pathlib import Path  # Type-safe path handling for state files.
+
+from .logging_utils import LOGGER  # Shared logger for cleanup warnings.
 
 
 def write_private_text(path: Path, content: str) -> None:
