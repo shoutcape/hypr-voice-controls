@@ -42,7 +42,7 @@ COMPUTE_TYPE_OVERRIDE = os.environ.get("VOICE_COMPUTE_TYPE")
 AUDIO_BACKEND = os.environ.get("VOICE_AUDIO_BACKEND", "pulse")
 AUDIO_SOURCE = os.environ.get("VOICE_AUDIO_SOURCE", "default")
 
-# Use XDG_RUNTIME_DIR for runtime files (socket, lock, state) when available.
+# Use XDG_RUNTIME_DIR for runtime files (socket) when available.
 # This directory is typically a user-private tmpfs (/run/user/<uid>) that is
 # auto-cleaned on logout and guaranteed to have 0700 permissions. Persistent
 # files (logs) stay in ~/.local/state/ so they survive reboots.
@@ -51,14 +51,9 @@ _state_dir = Path.home() / ".local" / "state"
 
 LOG_PATH = _state_dir / "voice-hotkey.log"
 SOCKET_PATH = _runtime_dir / "voice-hotkey.sock"
-DICTATE_STATE_PATH = _runtime_dir / "voice-hotkey-dictate.json"
-LOCK_PATH = _runtime_dir / "voice-hotkey.lock"
 DAEMON_CONNECT_TIMEOUT = env_float("VOICE_DAEMON_CONNECT_TIMEOUT", 0.4)
 DAEMON_RESPONSE_TIMEOUT = env_int("VOICE_DAEMON_RESPONSE_TIMEOUT", 180)
-DAEMON_START_RETRIES = env_int("VOICE_DAEMON_START_RETRIES", 40)
-DAEMON_START_DELAY = env_float("VOICE_DAEMON_START_DELAY", 0.1)
-DAEMON_MAX_REQUEST_BYTES = env_int("VOICE_DAEMON_MAX_REQUEST_BYTES", 8192)
-STATE_MAX_AGE_SECONDS = env_int("VOICE_STATE_MAX_AGE_SECONDS", 900)
+DAEMON_READY_TIMEOUT = env_float("VOICE_DAEMON_READY_TIMEOUT", 60.0)
 LOG_TRANSCRIPTS = env_bool("VOICE_LOG_TRANSCRIPTS", False)
 NOTIFY_TIMEOUT_MS = env_int("VOICE_NOTIFY_TIMEOUT_MS", 2200)
 

@@ -51,13 +51,12 @@ PRESSED_KEY_CODE=""
 
 send_daemon_input() {
   python3 - "$SOCKET_PATH" "$1" <<'PY'
-import json
 import socket
 import sys
 
 socket_path = sys.argv[1]
 input_mode = sys.argv[2]
-payload = json.dumps({"input": input_mode}).encode("utf-8") + b"\n"
+payload = (input_mode + "\n").encode("utf-8")
 
 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
     client.settimeout(2)
@@ -66,9 +65,11 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
     data = client.recv(1024)
 
 line = data.split(b"\n", 1)[0]
-response = json.loads(line.decode("utf-8"))
-rc = response.get("rc", 1)
-raise SystemExit(int(rc) if isinstance(rc, (int, float, str)) else 1)
+try:
+    rc = int(line.decode("utf-8").strip())
+except ValueError:
+    rc = 1
+raise SystemExit(rc)
 PY
 }
 

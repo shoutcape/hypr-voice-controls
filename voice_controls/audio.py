@@ -1,12 +1,8 @@
-"""Responsibility: Audio capture command construction and recorder process lifecycle control."""
+"""Responsibility: Build ffmpeg command lines for audio capture."""
 
-import os  # Send process signals and use low-level process utilities.
-import signal  # Signal constants (SIGINT/SIGTERM/SIGKILL) for recorder shutdown.
-import time  # Poll with timeouts while waiting for process exit.
-from pathlib import Path  # Access /proc and output paths with path objects.
+from pathlib import Path
 
-from .config import AUDIO_BACKEND, AUDIO_SOURCE  # Audio input backend/source configuration values.
-from .logging_utils import LOGGER  # Shared logger for audio process lifecycle events.
+from .config import AUDIO_BACKEND, AUDIO_SOURCE
 
 
 def build_ffmpeg_wav_capture_cmd(output_path: Path) -> list[str]:
@@ -30,96 +26,3 @@ def build_ffmpeg_wav_capture_cmd(output_path: Path) -> list[str]:
         ]
     )
     return cmd
-
-
-def pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-
-    stat_path = Path(f"/proc/{pid}/stat")
-    try:
-        stat_raw = stat_path.read_text(encoding="utf-8", errors="ignore")
-        if ") " in stat_raw:
-            state = stat_raw.split(") ", 1)[1][:1]
-            if state == "Z":
-                return False
-    except FileNotFoundError:
-        return False
-    except (OSError, ValueError, IndexError) as exc:
-        LOGGER.debug("Could not parse process stat pid=%s path=%s err=%s", pid, stat_path, exc)
-
-    return True
-
-
-def wait_for_pid_exit(pid: int, timeout_seconds: float) -> bool:
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        if not pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    return not pid_alive(pid)
-
-
-def pid_cmdline(pid: int) -> str:
-    try:
-        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
-        if not raw:
-            return ""
-        return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
-    except Exception:
-        return ""
-
-
-def stop_recording_pid(pid: int, label: str, required_substrings: list[str] | None = None) -> None:
-    if not pid_alive(pid):
-        LOGGER.info("%s process already exited pid=%s", label, pid)
-        return
-
-    if required_substrings:
-        cmdline = pid_cmdline(pid)
-        lowered = cmdline.lower()
-        tokens_match = bool(cmdline) and all(token.lower() in lowered for token in required_substrings)
-        if not tokens_match:
-            LOGGER.warning(
-                "%s process identity mismatch; refusing to signal pid=%s required=%s cmdline=%r",
-                label,
-                pid,
-                required_substrings,
-                cmdline,
-            )
-            return
-
-    try:
-        os.kill(pid, signal.SIGINT)
-    except ProcessLookupError:
-        LOGGER.info("%s process disappeared before SIGINT pid=%s", label, pid)
-        return
-    except Exception as exc:
-        LOGGER.warning("Could not signal %s pid=%s err=%s", label, pid, exc)
-        return
-
-    if wait_for_pid_exit(pid, 1.5):
-        LOGGER.info("%s process exited after SIGINT pid=%s", label, pid)
-        return
-
-    LOGGER.warning("%s process still alive after SIGINT; sending SIGTERM pid=%s", label, pid)
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        LOGGER.info("%s process disappeared before SIGTERM pid=%s", label, pid)
-        return
-    except Exception as exc:
-        LOGGER.warning("Could not SIGTERM %s pid=%s err=%s", label, pid, exc)
-        return
-
-    if wait_for_pid_exit(pid, 1.0):
-        LOGGER.info("%s process exited after SIGTERM pid=%s", label, pid)
-        return
-
-    LOGGER.error("%s process still alive; sending SIGKILL pid=%s", label, pid)
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except Exception as exc:
-        LOGGER.error("Could not SIGKILL %s pid=%s err=%s", label, pid, exc)
-
-    wait_for_pid_exit(pid, 0.5)

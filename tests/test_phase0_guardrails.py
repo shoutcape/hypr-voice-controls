@@ -16,13 +16,13 @@ class Phase0GuardrailTests(unittest.TestCase):
         self.assertTrue(expected.issubset(app.HOLD_INPUT_HANDLERS))
 
     def test_execute_daemon_request_returns_2_for_invalid_input(self) -> None:
-        rc = app._execute_daemon_request({"input": "definitely-not-valid"})
+        rc = app._execute_daemon_request("definitely-not-valid")
         self.assertEqual(rc, 2)
 
     def test_execute_daemon_request_forwards_supported_input(self) -> None:
         mock_handler = Mock(return_value=0)
         with patch.dict(app.HOLD_INPUT_HANDLERS, {"dictate-start": mock_handler}, clear=True):
-            rc = app._execute_daemon_request({"input": "dictate-start"})
+            rc = app._execute_daemon_request("dictate-start")
 
         self.assertEqual(rc, 0)
         mock_handler.assert_called_once_with()
@@ -30,11 +30,11 @@ class Phase0GuardrailTests(unittest.TestCase):
     def test_execute_daemon_request_returns_1_on_handler_exception(self) -> None:
         mock_handler = Mock(side_effect=RuntimeError("boom"))
         with patch.dict(app.HOLD_INPUT_HANDLERS, {"dictate-start": mock_handler}, clear=True):
-            rc = app._execute_daemon_request({"input": "dictate-start"})
+            rc = app._execute_daemon_request("dictate-start")
         self.assertEqual(rc, 1)
 
     def test_execute_daemon_request_returns_2_when_input_missing(self) -> None:
-        rc = app._execute_daemon_request({})
+        rc = app._execute_daemon_request(None)
         self.assertEqual(rc, 2)
 
     def test_main_forwards_input_mode_to_request_daemon(self) -> None:

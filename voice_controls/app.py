@@ -1,113 +1,227 @@
 """Responsibility: Orchestrate dictation hotkey sessions and daemon IPC."""
 
-import argparse  # Parse CLI flags like --input and --daemon.
-import fcntl  # Use advisory file locks to keep one daemon instance.
-import io  # Identify file-like objects for safe close() calls.
-import itertools  # Provide monotonic request IDs via count().
-import json  # Encode/decode daemon request and response payloads.
-import os  # Read and extend environment variables when spawning daemon.
-import shutil  # Check required/optional external tools with shutil.which.
-import signal  # Install handlers for SIGTERM/SIGINT to enable clean daemon shutdown.
-import socket  # Handle local UNIX socket client/server communication.
-import subprocess  # Start ffmpeg capture and background daemon processes.
-import sys  # Access current Python executable as runtime fallback.
-import tempfile  # Create temporary directories for per-hold recordings.
-import time  # Measure durations and implement retry/backoff timing.
-from pathlib import Path  # Build filesystem paths safely and clearly.
-from typing import Callable  # Type hint daemon input handlers.
+import argparse
+import io
+import itertools
+import json
+import os
+import select
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
 
-from .audio import build_ffmpeg_wav_capture_cmd, pid_alive, stop_recording_pid  # Audio capture command and recorder lifecycle helpers.
-from .config import (  # Central runtime constants and tunables.
+from .audio import build_ffmpeg_wav_capture_cmd
+from .config import (
     DAEMON_CONNECT_TIMEOUT,
-    DAEMON_MAX_REQUEST_BYTES,
+    DAEMON_READY_TIMEOUT,
     DAEMON_RESPONSE_TIMEOUT,
-    DAEMON_START_DELAY,
-    DAEMON_START_RETRIES,
-    DICTATE_STATE_PATH,
-    LOCK_PATH,
     LOG_PATH,
     LOG_TRANSCRIPTS,
     SOCKET_PATH,
-    STATE_MAX_AGE_SECONDS,
     VENV_PYTHON,
 )
-from .integrations import (  # Desktop side effects (notify and paste).
-    inject_text_into_focused_input,
-    notify,
-)
-from .logging_utils import LOGGER  # Shared file-backed logger.
-from .state_utils import write_private_text  # Atomic private state file writes.
-from .stt import preload_models, transcribe  # Speech-to-Text model preload and transcription.
+from .integrations import inject_text_into_focused_input, notify
+from .logging_utils import LOGGER
+from .stt import preload_models, transcribe
 
 
 DAEMON_REQUEST_IDS = itertools.count(1)
+IPC_MAX_LINE_BYTES = 128
+STOP_WAIT_SIGINT_SECONDS = 1.5
+STOP_WAIT_SIGTERM_SECONDS = 1.0
+STOP_WAIT_SIGKILL_SECONDS = 0.5
+DEPRECATED_ENV_VARS = (
+    "VOICE_DAEMON_START_RETRIES",
+    "VOICE_DAEMON_START_DELAY",
+    "VOICE_DAEMON_MAX_REQUEST_BYTES",
+    "VOICE_STATE_MAX_AGE_SECONDS",
+)
+RECOVERY_STATE_PATH = SOCKET_PATH.with_name("voice-hotkey-dictate-recovery.json")
 
-# Tracks live Popen objects for ffmpeg capture processes so the daemon can
-# reap them after signaling, preventing zombie accumulation.
-_ACTIVE_CAPTURE_PROCS: dict[int, subprocess.Popen] = {}
+
+@dataclass
+class DictationSession:
+    proc: subprocess.Popen
+    tmpdir: Path
+    audio_path: Path
+    started_at: float
 
 
-def _reap_capture_proc(pid: int) -> None:
-    """Wait for a tracked ffmpeg Popen to exit, preventing zombie processes."""
-    proc = _ACTIVE_CAPTURE_PROCS.pop(pid, None)
-    if proc is None:
-        return
-    try:
-        proc.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+ACTIVE_SESSION: DictationSession | None = None
+_DEPRECATED_ENV_WARNED = False
 
 
 def _sanitize_transcript(value: str) -> str:
-    """Return transcript text or a redacted marker based on log policy."""
     if LOG_TRANSCRIPTS:
         return repr(value)
     return f"<redacted len={len(value)}>"
 
 
-def _recv_json_line(sock: socket.socket, wall_deadline: float | None = None) -> dict:
-    """Read exactly one newline-terminated JSON line from sock.
+def _warn_deprecated_env_vars() -> None:
+    global _DEPRECATED_ENV_WARNED
+    if _DEPRECATED_ENV_WARNED:
+        return
+    for name in DEPRECATED_ENV_VARS:
+        if name in os.environ:
+            LOGGER.warning("Deprecated env var %s is set but ignored by current runtime", name)
+    _DEPRECATED_ENV_WARNED = True
 
-    Caller MUST call sock.settimeout() before invoking this function to
-    bound individual recv() calls.  The optional ``wall_deadline`` argument
-    (a ``time.time()`` value) additionally caps the total wall-clock time
-    spent in this function, preventing a slow-drip sender from resetting the
-    per-recv timeout indefinitely and blocking the daemon for hours.
 
-    Only bytes up to and including the first newline count toward the
-    DAEMON_MAX_REQUEST_BYTES limit, so trailing data after the newline
-    (e.g. from a misbehaving client) never causes a spurious rejection.
-    """
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
+def _pid_cmdline(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
+
+
+def _pid_matches_capture(pid: int, audio_path: Path) -> bool:
+    cmdline = _pid_cmdline(pid).lower()
+    if not cmdline:
+        return False
+    return "ffmpeg" in cmdline and str(audio_path).lower() in cmdline
+
+
+def _write_recovery_state(session: DictationSession) -> None:
+    payload = {
+        "pid": session.proc.pid,
+        "tmpdir": str(session.tmpdir),
+        "audio_path": str(session.audio_path),
+        "started_at": session.started_at,
+    }
+    RECOVERY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{RECOVERY_STATE_PATH.name}.",
+        suffix=".tmp",
+        dir=str(RECOVERY_STATE_PATH.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload))
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp_path.chmod(0o600)
+        os.replace(tmp_path, RECOVERY_STATE_PATH)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _clear_recovery_state() -> None:
+    RECOVERY_STATE_PATH.unlink(missing_ok=True)
+
+
+def _load_recovery_state() -> dict | None:
+    if not RECOVERY_STATE_PATH.exists():
+        return None
+    try:
+        payload = json.loads(RECOVERY_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        LOGGER.warning("Could not parse recovery session state; dropping stale file: %s", exc)
+        _clear_recovery_state()
+        return None
+    if not isinstance(payload, dict):
+        _clear_recovery_state()
+        return None
+    return payload
+
+
+def _cleanup_recovery_tmpdir(tmpdir_raw: str) -> None:
+    if not tmpdir_raw:
+        return
+    tmpdir = Path(tmpdir_raw)
+    try:
+        tmpdir_resolved = tmpdir.resolve()
+        base = Path(tempfile.gettempdir()).resolve()
+        if tmpdir_resolved.parent != base:
+            return
+        if not tmpdir_resolved.name.startswith("voice-dictate-hold-"):
+            return
+    except OSError:
+        return
+    if tmpdir.exists():
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _stop_capture_pid(pid: int, audio_path: Path) -> None:
+    if pid <= 0:
+        return
+    if not _pid_alive(pid):
+        return
+    if not _pid_matches_capture(pid, audio_path):
+        LOGGER.warning("Refusing to signal recovery pid=%s due to cmdline mismatch", pid)
+        return
+
+    try:
+        os.kill(pid, signal.SIGINT)
+    except OSError:
+        return
+
+    deadline = time.time() + STOP_WAIT_SIGINT_SECONDS
+    while time.time() < deadline:
+        if not _pid_alive(pid):
+            return
+        time.sleep(0.05)
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return
+
+    deadline = time.time() + STOP_WAIT_SIGTERM_SECONDS
+    while time.time() < deadline:
+        if not _pid_alive(pid):
+            return
+        time.sleep(0.05)
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        return
+
+
+def _recv_line(sock: socket.socket, max_bytes: int = IPC_MAX_LINE_BYTES) -> str:
     raw = bytearray()
-    total = 0
     while True:
-        if wall_deadline is not None and time.time() > wall_deadline:
-            raise ValueError("wall_clock_timeout")
         block = sock.recv(1024)
         if not block:
             break
         if b"\n" in block:
-            # Only count/keep bytes up to and including the newline.
             idx = block.index(b"\n")
-            chunk = block[: idx + 1]
-            total += len(chunk)
-            if total > DAEMON_MAX_REQUEST_BYTES:
-                raise ValueError("request_too_large")
-            raw.extend(chunk)
+            raw.extend(block[: idx + 1])
             break
-        total += len(block)
-        if total > DAEMON_MAX_REQUEST_BYTES:
-            raise ValueError("request_too_large")
         raw.extend(block)
+        if len(raw) > max_bytes:
+            raise ValueError("request_too_large")
 
     if not raw:
         raise ValueError("empty_request")
+    if len(raw) > max_bytes:
+        raise ValueError("request_too_large")
 
-    line = raw.split(b"\n", 1)[0].strip()
+    line = raw.split(b"\n", 1)[0].decode("utf-8").strip()
     if not line:
         raise ValueError("empty_request")
-    return json.loads(line.decode("utf-8"))
+    return line
 
 
 def validate_environment() -> bool:
@@ -124,32 +238,101 @@ def validate_environment() -> bool:
     return True
 
 
-def _wait_for_captured_audio(audio_path: Path, timeout_seconds: float = 2.0) -> None:
-    """Poll briefly until ffmpeg has written non-empty audio data."""
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
+def _stop_capture_process(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+
+    try:
+        proc.send_signal(signal.SIGINT)
+    except ProcessLookupError:
+        return
+    except OSError as exc:
+        LOGGER.warning("Could not stop recorder with SIGINT: %s", exc)
+    else:
         try:
-            if audio_path.stat().st_size > 0:
-                break
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
-        time.sleep(0.05)
+            proc.wait(timeout=STOP_WAIT_SIGINT_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            LOGGER.warning("Recorder still alive after SIGINT; escalating to SIGTERM pid=%s", proc.pid)
+
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        return
+    except OSError as exc:
+        LOGGER.warning("Could not stop recorder with SIGTERM: %s", exc)
+    else:
+        try:
+            proc.wait(timeout=STOP_WAIT_SIGTERM_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            LOGGER.warning("Recorder still alive after SIGTERM; escalating to SIGKILL pid=%s", proc.pid)
+
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        return
+    except OSError as exc:
+        LOGGER.error("Could not SIGKILL recorder pid=%s: %s", proc.pid, exc)
+        return
+
+    try:
+        proc.wait(timeout=STOP_WAIT_SIGKILL_SECONDS)
+    except subprocess.TimeoutExpired:
+        LOGGER.error("Recorder still alive after SIGKILL pid=%s", proc.pid)
+
+
+def _process_captured_audio(audio_path: Path) -> int:
+    if not audio_path.exists() or audio_path.stat().st_size == 0:
+        notify("Voice", "No speech captured")
+        LOGGER.info("Voice hotkey end status=no_speech source=dictate")
+        return 0
+
+    try:
+        text, detected_language, language_probability = transcribe(audio_path, language="en")
+    except Exception as exc:
+        notify("Voice", f"Transcription failed: {type(exc).__name__}")
+        LOGGER.exception("dictate transcription failed: %s", exc)
+        return 1
+
+    spoken = text.strip()
+    probability = language_probability if language_probability is not None else 0.0
+    LOGGER.info(
+        "Dictation hold language_detected=%s probability=%.3f text=%s",
+        detected_language,
+        probability,
+        _sanitize_transcript(spoken),
+    )
+
+    if not spoken:
+        notify("Voice", "No speech detected")
+        LOGGER.info("Voice hotkey end status=no_speech source=dictate")
+        return 0
+
+    if inject_text_into_focused_input(spoken):
+        notify("Voice", "Dictation pasted")
+        LOGGER.info("Voice hotkey end status=ok source=dictate text=%s", _sanitize_transcript(spoken))
+        return 0
+
+    notify("Voice", "Dictation paste failed")
+    LOGGER.info("Voice hotkey end status=paste_failed source=dictate text=%s", _sanitize_transcript(spoken))
+    return 1
 
 
 # -- Press/hold session helpers ------------------------------------------------
 
 def _start_session() -> int:
-    """Start a press-and-hold dictation capture and persist session state."""
-    if DICTATE_STATE_PATH.exists():
+    """Start a press-and-hold dictation capture in daemon memory."""
+    global ACTIVE_SESSION
+
+    if ACTIVE_SESSION is not None:
         LOGGER.info("Preempting existing dictate session")
         preempt_rc = _stop_session()
         if preempt_rc != 0:
             LOGGER.warning("Previous session cleanup returned rc=%s; starting new session anyway", preempt_rc)
 
-    tmpdir = tempfile.mkdtemp(prefix="voice-dictate-hold-")
-    audio_path = Path(tmpdir) / "capture.wav"
+    tmpdir = Path(tempfile.mkdtemp(prefix="voice-dictate-hold-"))
+    audio_path = tmpdir / "capture.wav"
 
     try:
         proc = subprocess.Popen(
@@ -158,27 +341,20 @@ def _start_session() -> int:
             stderr=subprocess.DEVNULL,
         )
     except FileNotFoundError:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        shutil.rmtree(str(tmpdir), ignore_errors=True)
         notify("Voice", "ffmpeg not found")
         LOGGER.error("Could not start dictate recorder: ffmpeg not found")
         return 1
 
-    _ACTIVE_CAPTURE_PROCS[proc.pid] = proc
-
-    state = {
-        "pid": proc.pid,
-        "tmpdir": tmpdir,
-        "audio_path": str(audio_path),
-        "pid_required_substrings": ["ffmpeg", str(audio_path)],
-        "started_at": time.time(),
-    }
+    ACTIVE_SESSION = DictationSession(proc=proc, tmpdir=tmpdir, audio_path=audio_path, started_at=time.time())
     try:
-        write_private_text(DICTATE_STATE_PATH, json.dumps(state))
+        _write_recovery_state(ACTIVE_SESSION)
     except Exception as exc:
-        LOGGER.error("Failed to write dictate state; aborting session: %s", exc)
-        stop_recording_pid(proc.pid, "dictate ffmpeg", required_substrings=["ffmpeg", str(audio_path)])
-        _reap_capture_proc(proc.pid)
+        LOGGER.error("Could not persist recovery session state; aborting recording: %s", exc)
+        _stop_capture_process(proc)
+        ACTIVE_SESSION = None
         shutil.rmtree(tmpdir, ignore_errors=True)
+        notify("Voice", "Dictation start failed")
         return 1
 
     notify("Voice", "Recording dictate... release keys to process (en)")
@@ -188,117 +364,51 @@ def _start_session() -> int:
 
 def _stop_session() -> int:
     """Stop active capture, transcribe audio, paste text, and clean up state."""
-    # Use try/except instead of exists()-then-read to avoid a TOCTOU race
-    # where the file is removed between the check and the read.
-    try:
-        state = json.loads(DICTATE_STATE_PATH.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    global ACTIVE_SESSION
+
+    session = ACTIVE_SESSION
+    recovered = _load_recovery_state() if session is None else None
+    if session is None and recovered is None:
         LOGGER.info("Voice hotkey end status=no_active_dictate")
         notify("Voice", "No active dictate")
         return 0
-    except Exception as exc:
-        LOGGER.error("Failed to parse dictate state: %s", exc)
-        DICTATE_STATE_PATH.unlink(missing_ok=True)
-        return 1
 
-    pid = int(state.get("pid", 0))
-
-    # Validate paths before use: missing or non-temp paths could point to
-    # arbitrary filesystem locations (e.g. Path("") resolves to CWD).
-    audio_path_str = state.get("audio_path", "")
-    tmpdir_str = state.get("tmpdir", "")
-    if not audio_path_str or not tmpdir_str:
-        LOGGER.error("Dictate state missing required path fields; aborting cleanup")
-        DICTATE_STATE_PATH.unlink(missing_ok=True)
-        return 1
-    # Resolve both paths before comparison so symlinks and ".." components
-    # cannot bypass the prefix check (e.g. "/tmp/../etc" → "/etc").
-    # The trailing separator ensures "/tmp-evil" is not accepted as a child
-    # of "/tmp".
-    tmp_prefix = str(Path(tempfile.gettempdir()).resolve()) + "/"
-    tmpdir_resolved = str(Path(tmpdir_str).resolve()) + "/"
-    if not tmpdir_resolved.startswith(tmp_prefix):
-        LOGGER.error("Refusing to remove non-temp dictate directory tmpdir=%s", tmpdir_str)
-        DICTATE_STATE_PATH.unlink(missing_ok=True)
-        return 1
-    audio_path = Path(audio_path_str)
-    tmpdir = Path(tmpdir_str)
-    audio_path_resolved = str(audio_path.resolve())
-    if not (audio_path_resolved + "/").startswith(tmpdir_resolved):
-        LOGGER.error(
-            "Refusing to use audio path outside dictate tmpdir audio=%s tmpdir=%s",
-            audio_path,
-            tmpdir,
-        )
-        DICTATE_STATE_PATH.unlink(missing_ok=True)
-        return 1
-
-    raw_required_substrings = state.get("pid_required_substrings")
-    if isinstance(raw_required_substrings, list):
-        required_substrings = [token for token in raw_required_substrings if isinstance(token, str) and token.strip()]
+    if session is not None:
+        ACTIVE_SESSION = None
+        audio_path = session.audio_path
+        tmpdir = session.tmpdir
+        notify("Voice", "Key released. Processing dictate...")
+        _stop_capture_process(session.proc)
     else:
-        required_substrings = []
-    if not required_substrings:
-        required_substrings = ["ffmpeg"]
-    started_at = state.get("started_at")
-
-    notify("Voice", "Key released. Processing dictate...")
-
-    # Stop recorder if still active
-    if pid > 0:
-        active_recorder = pid_alive(pid)
-        if active_recorder and isinstance(started_at, (int, float)):
-            active_recorder = (time.time() - float(started_at)) <= STATE_MAX_AGE_SECONDS
-
-        if active_recorder:
-            stop_recording_pid(pid, "dictate ffmpeg", required_substrings=required_substrings)
-        else:
-            LOGGER.warning("Skipping inactive dictate recorder pid=%s max_age=%ss", pid, STATE_MAX_AGE_SECONDS)
-
-        # Reap the child process to prevent zombie accumulation.
-        _reap_capture_proc(pid)
-
-    _wait_for_captured_audio(audio_path)
+        recovery_payload = recovered
+        if recovery_payload is None:
+            LOGGER.info("Voice hotkey end status=no_active_dictate")
+            notify("Voice", "No active dictate")
+            return 0
+        try:
+            audio_path_raw = str(recovery_payload.get("audio_path", ""))
+            tmpdir_raw = str(recovery_payload.get("tmpdir", ""))
+            pid = int(recovery_payload.get("pid", 0))
+        except (TypeError, ValueError):
+            _clear_recovery_state()
+            LOGGER.info("Voice hotkey end status=no_active_dictate")
+            notify("Voice", "No active dictate")
+            return 0
+        if not audio_path_raw or not tmpdir_raw:
+            _clear_recovery_state()
+            LOGGER.info("Voice hotkey end status=no_active_dictate")
+            notify("Voice", "No active dictate")
+            return 0
+        audio_path = Path(audio_path_raw)
+        tmpdir = Path(tmpdir_raw)
+        notify("Voice", "Recovered previous session. Processing dictate...")
+        _stop_capture_pid(pid, audio_path)
 
     try:
-        if not audio_path.exists() or audio_path.stat().st_size == 0:
-            notify("Voice", "No speech captured")
-            LOGGER.info("Voice hotkey end status=no_speech source=dictate")
-            return 0
-
-        try:
-            text, detected_language, language_probability = transcribe(audio_path, language="en")
-        except Exception as exc:
-            notify("Voice", f"Transcription failed: {type(exc).__name__}")
-            LOGGER.exception("dictate transcription failed: %s", exc)
-            return 1
-
-        spoken = text.strip()
-        probability = language_probability if language_probability is not None else 0.0
-        LOGGER.info(
-            "Dictation hold language_detected=%s probability=%.3f text=%s",
-            detected_language,
-            probability,
-            _sanitize_transcript(spoken),
-        )
-
-        if not spoken:
-            notify("Voice", "No speech detected")
-            LOGGER.info("Voice hotkey end status=no_speech source=dictate")
-            return 0
-
-        if inject_text_into_focused_input(spoken):
-            notify("Voice", "Dictation pasted")
-            LOGGER.info("Voice hotkey end status=ok source=dictate text=%s", _sanitize_transcript(spoken))
-            return 0
-
-        notify("Voice", "Dictation paste failed")
-        LOGGER.info("Voice hotkey end status=paste_failed source=dictate text=%s", _sanitize_transcript(spoken))
-        return 1
+        return _process_captured_audio(audio_path)
     finally:
-        DICTATE_STATE_PATH.unlink(missing_ok=True)
-        if tmpdir.exists():
-            shutil.rmtree(tmpdir, ignore_errors=True)
+        _clear_recovery_state()
+        _cleanup_recovery_tmpdir(str(tmpdir))
 
 
 # -- Dictation ----------------------------------------------------------------
@@ -330,23 +440,20 @@ def parse_args() -> argparse.Namespace:
 
 
 def start_daemon() -> subprocess.Popen | None:
-    """Spawn the daemon as a detached background process.
-
-    Returns the Popen object so the caller can detect an immediate crash via
-    Popen.poll(); returns None if the process could not be spawned at all.
-    Since start_new_session=True is used, the child is adopted by init on
-    detach and will not become a zombie of this process.
-    """
+    """Spawn the daemon as a detached background process."""
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
     runtime_python = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     repo_root = str(Path(__file__).resolve().parents[1])
     env = os.environ.copy()
     current_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = repo_root if not current_pythonpath else f"{repo_root}:{current_pythonpath}"
+    stderr_log_handle: io.TextIOBase | None = None
+    stderr_target: int | io.TextIOBase
 
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        stderr_target = LOG_PATH.open("a")
+        stderr_log_handle = LOG_PATH.open("a")
+        stderr_target = stderr_log_handle
     except OSError as exc:
         LOGGER.warning("Could not open log file for daemon stderr; using DEVNULL: %s", exc)
         stderr_target = subprocess.DEVNULL
@@ -355,8 +462,9 @@ def start_daemon() -> subprocess.Popen | None:
         proc = subprocess.Popen(
             [runtime_python, "-m", "voice_controls", "--daemon"],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=stderr_target,
+            text=True,
             start_new_session=True,
             env=env,
         )
@@ -365,77 +473,98 @@ def start_daemon() -> subprocess.Popen | None:
         LOGGER.error("Could not start daemon process: %s", exc)
         return None
     finally:
-        if isinstance(stderr_target, io.IOBase):
-            stderr_target.close()
+        if stderr_log_handle is not None:
+            stderr_log_handle.close()
+
+
+def _wait_for_daemon_ready(proc: subprocess.Popen) -> bool:
+    if proc.stdout is None:
+        return False
+
+    ready, _, _ = select.select([proc.stdout], [], [], DAEMON_READY_TIMEOUT)
+    if not ready:
+        LOGGER.error("Voice daemon did not report READY within timeout=%ss", DAEMON_READY_TIMEOUT)
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+        return False
+
+    line = proc.stdout.readline()
+    if line.strip() != "READY":
+        LOGGER.error("Voice daemon sent unexpected startup marker: %r", line.strip())
+        return False
+    return True
+
+
+def _parse_rc_line(line: str) -> int:
+    stripped = line.strip()
+    if stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+            rc_value = payload.get("rc", 1)
+        except Exception:
+            rc_value = 1
+        try:
+            return int(rc_value)
+        except (TypeError, ValueError):
+            LOGGER.warning("Invalid rc value from daemon JSON payload: %r", rc_value)
+            return 1
+
+    if stripped in {"0", "1", "2"}:
+        return int(stripped)
+    try:
+        return int(stripped)
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid rc value from daemon: %r", stripped)
+        return 1
+
+
+def _send_daemon_request(input_mode: str) -> int:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(DAEMON_CONNECT_TIMEOUT)
+        client.connect(str(SOCKET_PATH))
+        client.settimeout(DAEMON_RESPONSE_TIMEOUT)
+        client.sendall(f"{input_mode}\n".encode("utf-8"))
+        response_line = _recv_line(client)
+    return _parse_rc_line(response_line)
 
 
 def request_daemon(input_mode: str) -> int:
     """Send one action request to the daemon, auto-starting it if needed."""
-    payload = json.dumps({"input": input_mode}).encode("utf-8") + b"\n"
-
-    daemon_proc: subprocess.Popen | None = None
-
-    for attempt in range(DAEMON_START_RETRIES):
-        # If the daemon process we spawned has already exited, fail fast
-        # rather than retrying until the retry limit is exhausted.
-        if daemon_proc is not None and daemon_proc.poll() is not None:
-            LOGGER.error(
-                "Voice daemon process exited immediately rc=%s; not retrying",
-                daemon_proc.returncode,
-            )
+    _warn_deprecated_env_vars()
+    try:
+        return _send_daemon_request(input_mode)
+    except (FileNotFoundError, ConnectionRefusedError, socket.timeout, OSError, ValueError):
+        daemon_proc = start_daemon()
+        if daemon_proc is None:
+            LOGGER.error("Could not start voice-hotkey daemon process")
+            notify("Voice", "Voice daemon unavailable")
+            return 1
+        if not _wait_for_daemon_ready(daemon_proc):
+            LOGGER.error("Voice daemon failed startup handshake")
+            notify("Voice", "Voice daemon unavailable")
+            return 1
+        try:
+            return _send_daemon_request(input_mode)
+        except (FileNotFoundError, ConnectionRefusedError, socket.timeout, OSError, ValueError) as exc:
+            LOGGER.error("Could not reach voice-hotkey daemon after startup: %s", exc)
             notify("Voice", "Voice daemon unavailable")
             return 1
 
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(DAEMON_CONNECT_TIMEOUT)
-                client.connect(str(SOCKET_PATH))
-                client.settimeout(DAEMON_RESPONSE_TIMEOUT)
-                client.sendall(payload)
-                data = _recv_json_line(client)
-        except (FileNotFoundError, ConnectionRefusedError, socket.timeout, json.JSONDecodeError, ValueError, OSError):
-            if attempt == 0:
-                daemon_proc = start_daemon()
-                if daemon_proc is None:
-                    LOGGER.error("Could not start voice-hotkey daemon process")
-                    notify("Voice", "Voice daemon unavailable")
-                    return 1
-                # Give the daemon a longer head-start on the first retry so it
-                # has time to import and preload models before we poll again.
-                time.sleep(DAEMON_START_DELAY * 5)
-            elif attempt < DAEMON_START_RETRIES - 1:
-                time.sleep(DAEMON_START_DELAY)
-            continue
 
-        # A response was received: parse rc and return immediately without
-        # retrying. A bad rc value is the daemon's problem, not a transient
-        # connection failure, so retrying would re-execute the request.
-        rc_value = data.get("rc", 1)
-        if isinstance(rc_value, (int, float)):
-            return int(rc_value)
-        try:
-            return int(rc_value)
-        except (ValueError, TypeError):
-            LOGGER.warning("Invalid rc value from daemon: %r", rc_value)
-            return 1
-
-    LOGGER.error("Could not reach voice-hotkey daemon after retries")
-    notify("Voice", "Voice daemon unavailable")
-    return 1
-
-
-def _execute_daemon_request(request: dict) -> int:
-    """Validate daemon request payload and run the mapped input handler."""
+def _execute_daemon_request(request: object) -> int:
+    """Validate daemon request and run the mapped input handler."""
     request_id = next(DAEMON_REQUEST_IDS)
     started_at = time.time()
-    input_mode = request.get("input")
-    if not isinstance(input_mode, str):
+    if not isinstance(request, str):
         LOGGER.warning(
-            "Rejected daemon request with invalid input type=%s request_id=%s",
-            type(input_mode).__name__,
+            "Rejected daemon request with invalid request type=%s request_id=%s",
+            type(request).__name__,
             request_id,
         )
         return 2
+    input_mode = request
     handler = HOLD_INPUT_HANDLERS.get(input_mode)
     if handler is None:
         LOGGER.warning("Rejected invalid daemon input=%r request_id=%s", input_mode, request_id)
@@ -455,73 +584,102 @@ def _execute_daemon_request(request: dict) -> int:
     return rc
 
 
+def _decode_request_line(line: str) -> tuple[object, bool]:
+    stripped = line.strip()
+    if stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+        except Exception:
+            return None, True
+        if isinstance(payload, dict):
+            return payload.get("input"), True
+        return None, True
+    return stripped, False
+
+
 def _handle_daemon_connection(conn: socket.socket) -> None:
     """Process a single client socket: decode request, execute, return rc."""
     with conn:
         try:
             conn.settimeout(DAEMON_CONNECT_TIMEOUT)
-            request = _recv_json_line(conn, wall_deadline=time.time() + DAEMON_CONNECT_TIMEOUT)
-        except (socket.timeout, UnicodeDecodeError, json.JSONDecodeError, ValueError, OSError) as exc:
+            request = _recv_line(conn)
+        except (socket.timeout, UnicodeDecodeError, ValueError, OSError) as exc:
             LOGGER.warning("Voice daemon request parse failed: %s", exc)
             request = None
+            wants_json = False
+        else:
+            request, wants_json = _decode_request_line(request)
 
         rc = _execute_daemon_request(request) if request is not None else 1
         try:
-            conn.sendall((json.dumps({"rc": rc}) + "\n").encode("utf-8"))
+            if wants_json:
+                conn.sendall((json.dumps({"rc": rc}) + "\n").encode("utf-8"))
+            else:
+                conn.sendall(f"{rc}\n".encode("utf-8"))
         except OSError as exc:
             LOGGER.debug("Voice daemon response send failed rc=%s err=%s", rc, exc)
 
 
+def _socket_has_live_daemon() -> bool:
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(DAEMON_CONNECT_TIMEOUT)
+            probe.connect(str(SOCKET_PATH))
+        return True
+    except ConnectionRefusedError:
+        return False
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def run_daemon() -> int:
     """Run single-instance UNIX-socket daemon loop for hotkey actions."""
+    global ACTIVE_SESSION
+
     if not validate_environment():
         return 1
 
-    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    lock_handle = LOCK_PATH.open("a+", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        LOGGER.info("Voice hotkey daemon already running lock=%s", LOCK_PATH)
-        lock_handle.close()
-        return 0
+    _warn_deprecated_env_vars()
 
-    # Install signal handlers so SIGTERM (systemd stop) and SIGINT (Ctrl-C)
-    # cause a clean exit rather than an unhandled exception with a traceback.
     _shutdown = False
+    server: socket.socket | None = None
 
     def _request_shutdown(signum: int, frame: object) -> None:
         nonlocal _shutdown
         _shutdown = True
         LOGGER.info("Voice hotkey daemon received signal %s; shutting down", signum)
+        session = ACTIVE_SESSION
+        if session is not None:
+            try:
+                _stop_capture_process(session.proc)
+            except Exception as exc:
+                LOGGER.warning("Failed stopping active recorder during shutdown: %s", exc)
+        if server is not None:
+            try:
+                server.close()
+            except OSError:
+                pass
 
     signal.signal(signal.SIGTERM, _request_shutdown)
     signal.signal(signal.SIGINT, _request_shutdown)
 
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
     if SOCKET_PATH.exists():
+        if _socket_has_live_daemon():
+            LOGGER.info("Voice hotkey daemon already running socket=%s", SOCKET_PATH)
+            return 0
         SOCKET_PATH.unlink(missing_ok=True)
 
-    try:
-        preload_models()
-    except Exception as exc:
-        # Notify the user immediately so they know transcription will fail,
-        # rather than getting a silent error on every hotkey press. The daemon
-        # continues running so it can still accept requests (the model may load
-        # successfully on first transcription if the preload failure was transient).
-        notify("Voice", f"Model preload failed: {type(exc).__name__}")
-
-    LOGGER.info("Voice hotkey daemon listening socket=%s pid=%s", SOCKET_PATH, os.getpid())
+    LOGGER.info("Voice hotkey daemon starting socket=%s pid=%s", SOCKET_PATH, os.getpid())
 
     bound = False
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server_socket:
+            server = server_socket
             # Set a restrictive umask before bind() so the socket is created
-            # with 0o600 permissions, eliminating the TOCTOU window between
-            # bind() and the chmod() below where any local user could connect.
             old_umask = os.umask(0o177)
             try:
-                server.bind(str(SOCKET_PATH))
+                server_socket.bind(str(SOCKET_PATH))
                 bound = True
             finally:
                 os.umask(old_umask)
@@ -529,20 +687,24 @@ def run_daemon() -> int:
                 SOCKET_PATH.chmod(0o600)
             except Exception as exc:
                 LOGGER.warning("Could not chmod daemon socket: %s", exc)
-            server.listen(8)
-            # Allow accept() to be interrupted periodically so signal handlers
-            # can check _shutdown and exit cleanly without waiting indefinitely.
-            server.settimeout(1.0)
+            server_socket.listen(8)
 
-            # The accept loop is intentionally single-threaded: requests are
-            # serialised to avoid concurrent ffmpeg captures and to prevent
-            # parallel Whisper inference. Clients queue in the kernel backlog
-            # (size 8) and are served in order. This means a slow transcription
-            # blocks subsequent hotkey presses until it completes.
+            try:
+                preload_models()
+            except Exception as exc:
+                notify("Voice", f"Model preload failed: {type(exc).__name__}")
+                LOGGER.exception("Model preload failed; daemon exiting: %s", exc)
+                return 1
+
+            print("READY", flush=True)
+            LOGGER.info("Voice hotkey daemon listening socket=%s pid=%s", SOCKET_PATH, os.getpid())
+
             while not _shutdown:
                 try:
-                    conn, _ = server.accept()
-                except socket.timeout:
+                    conn, _ = server_socket.accept()
+                except OSError:
+                    if _shutdown:
+                        break
                     continue
                 _handle_daemon_connection(conn)
 
@@ -550,7 +712,6 @@ def run_daemon() -> int:
     finally:
         if bound:
             SOCKET_PATH.unlink(missing_ok=True)
-        lock_handle.close()
     return 0
 
 
