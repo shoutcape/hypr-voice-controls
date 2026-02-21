@@ -1,0 +1,30 @@
+[project]
+name = "hypr-voice-controls"
+version = "0.1.0"
+description = "Press-and-hold voice dictation for Hyprland via faster-whisper"
+requires-python = ">=3.10"
+dependencies = [
+    "faster-whisper>=1.0.0",
+]
+
+[project.optional-dependencies]
+# GPU acceleration via CUDA (optional — CPU fallback is automatic)
+cuda = [
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12",
+]
+# Development tools
+dev = [
+    "faster-whisper>=1.0.0",
+]
+
+[project.scripts]
+voice-controls = "voice_controls:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["voice_controls*"]

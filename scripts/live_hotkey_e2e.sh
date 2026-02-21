@@ -3,7 +3,9 @@
 set -euo pipefail
 
 LOG_PATH="${LOG_PATH:-$HOME/.local/state/voice-hotkey.log}"
-SOCKET_PATH="${SOCKET_PATH:-$HOME/.local/state/voice-hotkey.sock}"
+# Mirror the Python config fallback: use XDG_RUNTIME_DIR when set (systemd
+# user sessions), otherwise fall back to ~/.local/state/.
+SOCKET_PATH="${SOCKET_PATH:-${XDG_RUNTIME_DIR:-$HOME/.local/state}/voice-hotkey.sock}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-1.0}"
 MIN_DELTA="${MIN_DELTA:-1}"
 

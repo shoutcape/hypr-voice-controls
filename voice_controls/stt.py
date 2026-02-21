@@ -131,7 +131,13 @@ def transcribe(audio_path: Path, language: str | None = None) -> tuple[str, str,
 
 
 def preload_models() -> None:
+    """Warm the Whisper model cache at daemon startup.
+
+    Logs a warning and re-raises on failure so the caller can notify the user
+    that transcription will not work until the model loads successfully.
+    """
     try:
         get_whisper_model(MODEL_NAME)
     except Exception as exc:
         LOGGER.warning("Model preload failed name=%s err=%s", MODEL_NAME, exc)
+        raise

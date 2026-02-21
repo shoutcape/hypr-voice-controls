@@ -8,6 +8,7 @@ from functools import lru_cache  # Cache function results (Least Recently Used s
 from .config import (  # Runtime settings controlling notify behavior and dictation sanitization.
     DICTATION_ALLOW_NEWLINES,
     NOTIFY_TIMEOUT_MS,
+    PASTE_SHORTCUT,
 )
 from .logging_utils import LOGGER  # Shared logger for integration successes/failures.
 
@@ -66,6 +67,8 @@ def notify(title: str, body: str) -> None:
                     clean_body,
                 ],
                 check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 timeout=2,
             )
         except Exception as exc:
@@ -140,7 +143,7 @@ def _inject_text_via_clipboard(text: str) -> bool:
         LOGGER.error("Clipboard write failed rc=%s", copy_proc.returncode)
         return False
 
-    cmd = ["hyprctl", "dispatch", "sendshortcut", "CTRL SHIFT,V,"]
+    cmd = ["hyprctl", "dispatch", "sendshortcut", PASTE_SHORTCUT]
     try:
         proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=3)
     except Exception as exc:
