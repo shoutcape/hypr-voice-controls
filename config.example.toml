@@ -1,0 +1,45 @@
+# voice-controls configuration
+# Copy to ~/.config/voice-controls/config.toml and edit as needed.
+# All values shown are the defaults. You only need to set what you want to change.
+# Tilde (~) is expanded to your home directory in path fields.
+
+# ── Speech-to-text model ─────────────────────────────────────────
+
+# Path to the GGML whisper model file.
+# English-only .en models are faster and more accurate for English speech.
+# Available (run: ./scripts/download-model.sh models <name>):
+#   tiny.en   75 MB  — fastest, lower accuracy
+#   base.en  142 MB  — good balance (default)
+#   small.en 466 MB  — better accuracy, slower
+#   medium.en 1.5 GB — best accuracy, slowest
+model_path = "~/.local/share/voice-controls/models/ggml-base.en.bin"
+
+# Compute device: "cpu" or "cuda"
+# CUDA requires building with: make build-cuda
+device = "cpu"
+
+# ── Audio capture ────────────────────────────────────────────────
+
+# PipeWire / PulseAudio input source.
+# "default" uses the system default microphone.
+# To list available sources: ffmpeg -hide_banner -sources pulse
+audio_source = "default"
+
+# Maximum recording duration in seconds.
+# Recording automatically stops after this many seconds as a safety cap.
+max_record_secs = 120
+
+# ── Text output ──────────────────────────────────────────────────
+
+# Shortcut sent via `hyprctl dispatch sendshortcut` to paste clipboard contents.
+# Format: "MODIFIERS,KEY,"  (trailing comma is required by hyprctl)
+paste_shortcut = "CTRL SHIFT,V,"
+
+# ── Daemon ───────────────────────────────────────────────────────
+
+# Unix socket path for IPC between the client and daemon.
+# Defaults to $XDG_RUNTIME_DIR/voice-controls.sock
+# socket_path = "~/.local/state/voice-controls.sock"
+
+# Log level: "debug", "info", "warn", "error"
+log_level = "info"
