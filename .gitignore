@@ -1,8 +1,29 @@
-# Responsibility: Ignore local logs, caches, and personal workspace artifacts.
-*.log
-*.tmp
-__pycache__/
-*.pyc
+# Build artifacts
+build/
+*.o
+*.a
+
+# whisper.cpp clone (fetched at build time)
+third_party/
+
+# Downloaded models
+models/
+
+# Go
+__debug_bin*
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Secrets
+.env
+credentials.*
+
+# Research / notes
 research/
 obsidian/
-.beads/interactions.jsonl
+.beads/
