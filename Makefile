@@ -30,7 +30,7 @@ else
 endif
 
 # ── Phony targets ─────────────────────────────────────────────────
-.PHONY: all build build-cuda install clean clean-all whisper clone test smoke lint fmt help
+.PHONY: all build build-cuda install clean clean-all whisper clone test smoke lint fmt help check-portaudio
 
 all: build
 
@@ -49,6 +49,16 @@ help:
 	@echo "  clean        Remove build artifacts"
 	@echo "  clean-all    Remove build artifacts and whisper.cpp clone"
 
+# ── System dependency check ───────────────────────────────────────
+# Verifies portaudio19-dev (Debian/Ubuntu) or portaudio (Arch) is installed.
+# Only runs when building or testing — not for clean/fmt/help.
+check-portaudio:
+	@pkg-config --exists portaudio-2.0 2>/dev/null || \
+		(echo "ERROR: PortAudio development headers not found."; \
+		 echo "  Arch:          sudo pacman -S portaudio"; \
+		 echo "  Debian/Ubuntu: sudo apt install portaudio19-dev"; \
+		 exit 1)
+
 # ── Clone whisper.cpp ─────────────────────────────────────────────
 clone: $(WHISPER_DIR)/CMakeLists.txt
 
@@ -66,7 +76,7 @@ whisper: clone
 	cmake --build $(WHISPER_BUILD) --target whisper -- -j$$(nproc)
 
 # ── Build Go binary ──────────────────────────────────────────────
-build: whisper
+build: check-portaudio whisper
 	@echo "==> Building voice-controls..."
 	@mkdir -p build
 	CGO_ENABLED=1 \
@@ -78,7 +88,7 @@ build-cuda:
 	$(MAKE) build GGML_CUDA=1
 
 # Build dev smoke-test binaries (not installed)
-build-smoke: whisper
+build-smoke: check-portaudio whisper
 	@mkdir -p build
 	CGO_ENABLED=1 \
 	C_INCLUDE_PATH=$(INCLUDE_PATH) \
@@ -107,13 +117,13 @@ smoke: build-smoke
 		2>/dev/null
 
 # ── Test / Lint / Format ──────────────────────────────────────────
-test: whisper
+test: check-portaudio whisper
 	CGO_ENABLED=1 \
 	C_INCLUDE_PATH=$(INCLUDE_PATH) \
 	LIBRARY_PATH=$(LIBRARY_PATH) \
 	go test $(BUILD_FLAGS) ./...
 
-lint: whisper
+lint: check-portaudio whisper
 	CGO_ENABLED=1 \
 	C_INCLUDE_PATH=$(INCLUDE_PATH) \
 	LIBRARY_PATH=$(LIBRARY_PATH) \

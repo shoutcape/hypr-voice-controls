@@ -20,8 +20,8 @@ No internet connection required at runtime. All models and dependencies are loca
 
 | # | Feature | Description | Priority |
 |---|---------|-------------|----------|
-| 2.1 | PipeWire / PulseAudio capture | Record from the default mic via PipeWire (preferred) or PulseAudio fallback. | Must |
-| 2.2 | Configurable audio device | Let the user select a specific input device by name or ID. | Should |
+| 2.1 | PipeWire / PulseAudio capture | Record from the default mic via PortAudio (supports PipeWire and PulseAudio backends). | Must |
+| 2.2 | Configurable audio device | Let the user select a specific input device by name (substring-matched against PortAudio device list). | Should |
 | 2.3 | Voice activity detection (VAD) | Use silero-vad or similar to detect speech boundaries and avoid transcribing silence. | Should |
 | 2.4 | Noise filtering | Basic noise gate or pre-processing to improve recognition in noisy environments. | Could |
 
@@ -52,7 +52,7 @@ No internet connection required at runtime. All models and dependencies are loca
 | 5.1 | Persistent daemon process | Run as a long-lived background process to keep model warm and respond instantly. | Must |
 | 5.2 | Socket-based IPC | Control the daemon (start/stop/status) via a Unix socket for reliability and speed. | Must |
 | 5.3 | Systemd user service | Ship a systemd user unit for auto-start, restart-on-crash, and clean lifecycle management. | Must |
-| 5.4 | Graceful shutdown | Handle SIGTERM/SIGINT cleanly, release audio devices and temp files. | Must |
+| 5.4 | Graceful shutdown | Handle SIGTERM/SIGINT cleanly, release audio devices and in-memory buffers. | Must |
 | 5.5 | Session recovery | Detect stale sockets/PID files and recover without requiring manual cleanup. | Should |
 | 5.6 | Low idle resource usage | When not actively recording, the daemon should use near-zero CPU and minimal RAM beyond model weight. | Must |
 
@@ -102,16 +102,15 @@ No internet connection required at runtime. All models and dependencies are loca
 
 | # | Feature | Description | Priority |
 |---|---------|-------------|----------|
-| 10.1 | Clean Python packaging | `pyproject.toml` with proper entry points, deps, and version management. | Must |
-| 10.2 | Type annotations | Full type hints across the codebase; pass mypy strict. | Must |
-| 10.3 | Test suite | Unit tests for core logic; integration tests for IPC and audio pipeline. | Must |
-| 10.4 | CI pipeline | GitHub Actions for lint, type check, and test on every push/PR. | Should |
+| 10.1 | Clean Go module | `go.mod` with proper dependencies and version pinning. | Must |
+| 10.2 | Test suite | Unit tests for core logic; integration tests for IPC and audio pipeline. | Must |
+| 10.3 | CI pipeline | GitHub Actions for lint, vet, and test on every push/PR. | Should |
 
 ## 11. Installation & Distribution
 
 | # | Feature | Description | Priority |
 |---|---------|-------------|----------|
-| 11.1 | pip / pipx installable | Standard Python package installable from PyPI or git. | Must |
+| 11.1 | `make install` | Install binary, config, model, and systemd service in one step. | Must |
 | 11.2 | AUR package | Arch User Repository package for easy Arch/Hyprland user installation. | Should |
 | 11.3 | Dependency minimalism | Keep runtime deps small; avoid heavy frameworks. | Must |
 | 11.4 | Post-install setup helper | Script or command that verifies mic access, downloads model, and creates systemd unit. | Should |

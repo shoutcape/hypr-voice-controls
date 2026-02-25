@@ -20,9 +20,14 @@ device = "cpu"
 
 # ── Audio capture ────────────────────────────────────────────────
 
-# PipeWire / PulseAudio input source.
+# PortAudio input device name.
 # "default" uses the system default microphone.
-# To list available sources: ffmpeg -hide_banner -sources pulse
+# Any other value is matched by substring against PortAudio device names.
+# To list available PortAudio device names:
+#   ./build/audio-smoke -list-devices   (once that flag is added)
+# For now, PortAudio device names can be inspected via:
+#   python3 -c "import sounddevice; print(sounddevice.query_devices())"
+# Note: PortAudio device names differ from pactl source names.
 audio_source = "default"
 
 # Maximum recording duration in seconds.

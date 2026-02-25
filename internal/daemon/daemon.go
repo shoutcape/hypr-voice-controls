@@ -1,11 +1,13 @@
 // Package daemon implements the long-running voice-controls daemon.
 //
 // Lifecycle:
-//  1. Load whisper model into memory (kept warm between activations).
-//  2. Create Unix domain socket at cfg.SocketPath with mode 0600.
-//  3. Print "READY\n" to stdout — the client waits for this before connecting.
-//  4. Accept connections; handle each in its own goroutine.
-//  5. On SIGTERM/SIGINT: stop any active session, close socket, free model.
+//  1. Initialise PortAudio (audio.Init).
+//  2. Load whisper model into memory (kept warm between activations).
+//  3. Create Unix domain socket at cfg.SocketPath with mode 0600.
+//  4. Print "READY\n" to stdout — the client waits for this before connecting.
+//  5. Accept connections; handle each in its own goroutine.
+//  6. On SIGTERM/SIGINT: stop any active session, close socket, free model,
+//     teardown PortAudio (audio.Term).
 //
 // Session state machine (per daemon instance, not per connection):
 //
@@ -45,6 +47,12 @@ type daemon struct {
 
 // Run is the entry point called by main. It blocks until the daemon exits.
 func Run(cfg *config.Config) error {
+	// ── Initialise PortAudio ─────────────────────────────────────
+	if err := audio.Init(); err != nil {
+		return fmt.Errorf("failed to initialise audio: %w", err)
+	}
+	defer audio.Term()
+
 	// ── Load model ───────────────────────────────────────────────
 	log.Printf("loading model: %s", cfg.ModelPath)
 	engine, err := stt.NewEngine(cfg)
@@ -138,9 +146,13 @@ func (d *daemon) handleStart() *ipc.Response {
 	defer d.mu.Unlock()
 
 	// Preempt any existing session.
+	// Stop() calls stream.Stop() which blocks for up to one callback period
+	// (~32 ms) while holding d.mu. This is acceptable at the current buffer
+	// size; if framesPerBuffer were ever increased significantly, consider
+	// releasing d.mu before calling Stop().
 	if d.current != nil {
 		log.Printf("preempting existing session")
-		d.current.capture.Stop() //nolint:errcheck — best-effort cleanup
+		_, _ = d.current.capture.Stop() // best-effort; discard samples
 		d.current.capture.Cleanup()
 		d.current = nil
 	}
@@ -172,13 +184,13 @@ func (d *daemon) handleStop() *ipc.Response {
 	}
 	defer sess.capture.Cleanup()
 
-	wavPath, err := sess.capture.Stop()
+	samples, err := sess.capture.Stop()
 	if err != nil {
 		return ipc.Err(fmt.Sprintf("capture failed: %v", err))
 	}
 
-	log.Printf("transcribing %s", wavPath)
-	result, err := d.engine.TranscribeFile(wavPath)
+	log.Printf("transcribing %d samples (%.1fs)", len(samples), float64(len(samples))/16000)
+	result, err := d.engine.Transcribe(samples)
 	if err != nil {
 		return ipc.Err(fmt.Sprintf("transcription failed: %v", err))
 	}
@@ -218,7 +230,7 @@ func (d *daemon) cancelSession() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.current != nil {
-		d.current.capture.Stop() //nolint:errcheck
+		_, _ = d.current.capture.Stop() // best-effort; discard samples
 		d.current.capture.Cleanup()
 		d.current = nil
 	}

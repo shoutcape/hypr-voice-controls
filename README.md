@@ -13,12 +13,12 @@ No cloud. No internet. Everything runs locally.
 ```
 hold key
     └─▶ voice-controls --input dictate-start
-            └─▶ daemon spawns ffmpeg (mic capture, 16 kHz mono WAV)
+            └─▶ daemon opens PortAudio stream (16 kHz mono, callback-based)
 
 release key
     └─▶ voice-controls --input dictate-stop
-            └─▶ daemon stops ffmpeg
-            └─▶ whisper.cpp transcribes WAV → text
+            └─▶ daemon stops PortAudio stream → in-memory []float32 samples
+            └─▶ whisper.cpp transcribes samples → text
             └─▶ wl-copy writes text to clipboard
             └─▶ hyprctl dispatch sendshortcut pastes into focused window
             └─▶ desktop notification shows what was pasted
@@ -39,12 +39,12 @@ on every activation — no cold-start penalty after the first use.
 | `cmake` ≥ 3.14 | Build whisper.cpp |
 | `gcc` / `g++` | C/C++ compiler for whisper.cpp |
 | `git` | Clone whisper.cpp at build time |
+| `portaudio19-dev` | PortAudio headers for audio capture (Arch: `portaudio`) |
 
 **Runtime dependencies**
 
 | Tool | Required | Purpose |
 |------|----------|---------|
-| `ffmpeg` | Yes | Mic capture (PipeWire / PulseAudio) |
 | `wl-copy` | Yes | Write text to Wayland clipboard |
 | `hyprctl` | Yes | Trigger paste shortcut |
 | `notify-send` | No | Desktop notifications (fallback if no hyprctl) |
@@ -137,7 +137,7 @@ max_record_secs = 120
 |----------|---------|
 | `VOICE_MODEL` | Path to GGML model file |
 | `VOICE_SOCKET` | Unix socket path |
-| `VOICE_AUDIO` | PulseAudio source name |
+| `VOICE_AUDIO` | PortAudio input device name (or `"default"`) |
 
 ---
 
@@ -201,7 +201,7 @@ hypr-voice-controls/
 │   ├── client/             # Socket client, daemon auto-start
 │   ├── ipc/                # JSON-line protocol (Request / Response types)
 │   ├── stt/                # whisper.cpp wrapper (model load, transcribe)
-│   ├── audio/              # ffmpeg subprocess (capture, stop, cleanup)
+│   ├── audio/              # PortAudio capture (callback stream, in-memory PCM)
 │   ├── output/             # wl-copy + hyprctl paste, text sanitisation
 │   └── notify/             # hyprctl notify + notify-send fallback
 ├── examples/
@@ -269,16 +269,16 @@ Two dev-only binaries in `cmd/` are not installed but useful during development:
 |-------|---------|--------|
 | 1 | Build system (Makefile, Go module, project structure) | Done |
 | 2 | STT integration (whisper.cpp via CGO) | Done |
-| 3 | Audio capture (ffmpeg subprocess, PipeWire/PulseAudio) | Done |
+| 3 | Audio capture (PortAudio callback stream, in-memory PCM) | Done |
 | 4 | Daemon + IPC (Unix socket, JSON-line protocol) | Done |
 | 5 | Text output (clipboard paste + desktop notifications) | Done |
-| 6 | Config file (TOML), systemd service, Hyprland examples | Pending |
+| 6 | Config file (TOML), systemd service, Hyprland examples | Done |
 
 ---
 
 ## Known limitations
 
-- TOML config file parsing is not yet implemented — use env vars or defaults for now.
 - CUDA build requires the CUDA toolkit at compile time; CPU-only is the default.
 - The whisper.cpp C library prints verbose init logs to stderr on startup; these are suppressed in normal use but visible in daemon logs.
 - `.en` models only — multilingual models are not supported by design.
+- PortAudio device enumeration emits harmless ALSA probe warnings to stderr during initialisation; these can be silenced by redirecting stderr (`2>/dev/null`) or are hidden in normal daemon use via journald.

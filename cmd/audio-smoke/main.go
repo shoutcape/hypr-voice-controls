@@ -20,14 +20,21 @@ import (
 
 func main() {
 	dur := flag.Int("dur", 3, "Recording duration in seconds")
-	source := flag.String("source", "default", "PulseAudio source name")
+	source := flag.String("source", "default", "PortAudio input device name (or \"default\")")
 	modelPath := flag.String("model", "models/ggml-base.en.bin", "Path to GGML model")
 	flag.Parse()
 
 	cfg := config.Defaults()
 	cfg.AudioSource = *source
 	cfg.ModelPath = *modelPath
-	cfg.MaxRecordSecs = *dur + 5
+	cfg.MaxRecordSecs = *dur + 5 // +5s safety margin above the sleep duration
+
+	// Initialise PortAudio once for the lifetime of this process.
+	if err := audio.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "error initialising audio: %v\n", err)
+		os.Exit(1)
+	}
+	defer audio.Term()
 
 	// Load model first so it's warm before we record.
 	fmt.Printf("Loading model: %s\n", cfg.ModelPath)
@@ -45,20 +52,25 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error starting capture: %v\n", err)
 		os.Exit(1)
 	}
+	// cap.Cleanup() releases the internal buffer. The copy returned by
+	// cap.Stop() is independent and remains valid after Cleanup runs.
+	// Note: os.Exit bypasses defers — this is harmless for a short-lived
+	// CLI tool as the OS reclaims all memory on exit.
 	defer cap.Cleanup()
 
 	time.Sleep(time.Duration(*dur) * time.Second)
 
-	wavPath, err := cap.Stop()
+	samples, err := cap.Stop()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error stopping capture: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Captured: %s — transcribing...\n", wavPath)
+	fmt.Printf("Captured %d samples (%.1fs) — transcribing...\n",
+		len(samples), float64(len(samples))/16000)
 	t := time.Now()
 
-	result, err := engine.TranscribeFile(wavPath)
+	result, err := engine.Transcribe(samples)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error transcribing: %v\n", err)
 		os.Exit(1)
