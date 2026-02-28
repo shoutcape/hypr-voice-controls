@@ -66,6 +66,11 @@ const (
 	// melScale constants applied after melspec: scaled = (raw/melScaleDiv) + melScaleAdd
 	melScaleDiv = 10.0
 	melScaleAdd = 2.0
+
+	// Keep wakeword inference single-threaded so always-on detection does not
+	// monopolize CPU on systems with many cores.
+	wakewordIntraOpThreads = 1
+	wakewordInterOpThreads = 1
 )
 
 // ortOnce ensures the ONNX Runtime environment is initialized exactly once
@@ -138,6 +143,19 @@ type pipeline struct {
 func newPipeline(melModelPath, embModelPath, wwModelPath string) (*pipeline, error) {
 	p := &pipeline{}
 
+	sessOpts, err := ort.NewSessionOptions()
+	if err != nil {
+		return nil, fmt.Errorf("session options: %w", err)
+	}
+	defer sessOpts.Destroy() //nolint:errcheck
+
+	if err := sessOpts.SetIntraOpNumThreads(wakewordIntraOpThreads); err != nil {
+		return nil, fmt.Errorf("set wakeword intra-op threads: %w", err)
+	}
+	if err := sessOpts.SetInterOpNumThreads(wakewordInterOpThreads); err != nil {
+		return nil, fmt.Errorf("set wakeword inter-op threads: %w", err)
+	}
+
 	// ── Melspectrogram model ─────────────────────────────────────
 	// Input:  [1, 1280] float32 audio
 	// Output: [1, 1, F, 32] float32 mel frames
@@ -167,7 +185,7 @@ func newPipeline(melModelPath, embModelPath, wwModelPath string) (*pipeline, err
 	p.melSess, err = ort.NewAdvancedSession(melModelPath,
 		[]string{"input"}, []string{"output"},
 		[]ort.Value{p.melIn}, []ort.Value{p.melOut},
-		nil,
+		sessOpts,
 	)
 	if err != nil {
 		p.melIn.Destroy()
@@ -192,7 +210,7 @@ func newPipeline(melModelPath, embModelPath, wwModelPath string) (*pipeline, err
 	p.embSess, err = ort.NewAdvancedSession(embModelPath,
 		[]string{"input_1"}, []string{"conv2d_19"},
 		[]ort.Value{p.embIn}, []ort.Value{p.embOut},
-		nil,
+		sessOpts,
 	)
 	if err != nil {
 		p.embIn.Destroy()
@@ -227,7 +245,7 @@ func newPipeline(melModelPath, embModelPath, wwModelPath string) (*pipeline, err
 	p.wwSess, err = ort.NewAdvancedSession(wwModelPath,
 		[]string{wwInName}, []string{wwOutName},
 		[]ort.Value{p.wwIn}, []ort.Value{p.wwOut},
-		nil,
+		sessOpts,
 	)
 	if err != nil {
 		p.wwIn.Destroy()
