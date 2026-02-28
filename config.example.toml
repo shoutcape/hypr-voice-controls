@@ -48,3 +48,73 @@ paste_shortcut = "CTRL SHIFT,V,"
 
 # Log level: "debug", "info", "warn", "error"
 log_level = "info"
+
+# ── Wakeword (always-listening, hands-free activation) ───────────
+#
+# Requires three openWakeWord ONNX model files:
+#   melspectrogram.onnx   — converts raw audio to mel spectrogram
+#   embedding_model.onnx  — Google speech embeddings (shared across all wakewords)
+#   <wakeword>.onnx       — your trained wakeword classifier
+#
+# Download the shared models from the openWakeWord project:
+#   https://github.com/dscripka/openWakeWord
+# Place all three files in: ~/.local/share/voice-controls/models/
+#
+# Also requires the ONNX Runtime shared library at runtime:
+#   sudo pacman -S onnxruntime-cpu   (or onnxruntime-cuda for GPU)
+
+# Enable always-listening wakeword detection.
+# When enabled, speaking the wakeword starts recording automatically.
+# Push-to-talk continues to work alongside wakeword mode.
+wakeword_enabled = false
+
+# Path to the melspectrogram ONNX model (shared; from openWakeWord resources).
+wakeword_mel_model = "~/.local/share/voice-controls/models/melspectrogram.onnx"
+
+# Path to the speech embedding ONNX model (shared; from openWakeWord resources).
+wakeword_emb_model = "~/.local/share/voice-controls/models/embedding_model.onnx"
+
+# Path to your trained wakeword classifier ONNX model.
+wakeword_model = "~/.local/share/voice-controls/models/hey_hyper.onnx"
+
+# Detection threshold (0.0–1.0). Higher values = fewer false positives.
+# Recommended: use the calibrated threshold from your model's sweep log.
+# Default 0.5 is a balanced starting point; tune based on your environment.
+wakeword_threshold = 0.5
+
+# Number of consecutive above-threshold frames required before triggering.
+# At 80ms per frame: trigger_level=4 requires ~320ms of continuous detection.
+# Higher values reduce false positives but add latency.
+wakeword_trigger_level = 4
+
+# Frames to suppress after a detection (prevents rapid re-triggering).
+# At 80ms per frame: refractory=20 gives ~1.6 seconds of cooldown.
+wakeword_refractory = 20
+
+# Seconds of silence after which recording auto-stops.
+# Uses energy-based silence detection. 1.5s is a comfortable pause duration.
+wakeword_silence_stop_secs = 1.5
+
+# Hard cap on wakeword-triggered recording duration in seconds.
+# Recording stops after this many seconds regardless of silence.
+wakeword_max_record_secs = 10
+
+# ── ONNX Runtime ─────────────────────────────────────────────────
+
+# Path to the ONNX Runtime shared library.
+#
+# Option A — Official self-contained release (recommended; no dependency issues):
+#   mkdir -p ~/.local/lib
+#   curl -L https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-linux-x64-1.24.2.tgz | \
+#     tar -xz -C /tmp
+#   cp /tmp/onnxruntime-linux-x64-1.24.2/lib/libonnxruntime.so.1.24.2 ~/.local/lib/
+#   cp /tmp/onnxruntime-linux-x64-1.24.2/lib/libonnxruntime_providers_shared.so ~/.local/lib/
+#   ln -sf libonnxruntime.so.1.24.2 ~/.local/lib/libonnxruntime.so.1
+#   ln -sf libonnxruntime.so.1 ~/.local/lib/libonnxruntime.so
+#
+# Option B — Arch package (may have dependency issues on some systems):
+#   sudo pacman -S onnxruntime-cpu   (CPU-only)
+#   sudo pacman -S onnxruntime-cuda  (with CUDA support)
+#
+# The default auto-detects: ~/.local/lib first, then /usr/lib.
+onnx_lib_path = "~/.local/lib/libonnxruntime.so"

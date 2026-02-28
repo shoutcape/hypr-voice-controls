@@ -25,11 +25,13 @@ SERVICE_DIR="$HOME/.config/systemd/user"
 
 INSTALL_SERVICE=true
 INSTALL_MODEL=true
+INSTALL_WAKEWORD_MODELS=false
 
 for arg in "$@"; do
   case "$arg" in
-    --no-service) INSTALL_SERVICE=false ;;
-    --no-model)   INSTALL_MODEL=false ;;
+    --no-service)        INSTALL_SERVICE=false ;;
+    --no-model)          INSTALL_MODEL=false ;;
+    --wakeword-models)   INSTALL_WAKEWORD_MODELS=true ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
 done
@@ -81,6 +83,32 @@ if $INSTALL_SERVICE; then
   echo "  systemctl --user start voice-controls.service"
 fi
 
+# ── Wakeword models ──────────────────────────────────────────────
+if $INSTALL_WAKEWORD_MODELS; then
+  WW_SRC_DIR=""
+  # Try to find shared openWakeWord models from a local checkout.
+  for candidate in \
+    "$HOME/Github/hey-hyper-training/openWakeWord/openwakeword/resources/models" \
+    "$HOME/.config/hypr-voice-controls/wakeword"; do
+    if [[ -d "$candidate" ]]; then
+      WW_SRC_DIR="$candidate"
+      break
+    fi
+  done
+
+  if [[ -z "$WW_SRC_DIR" ]]; then
+    echo "WARNING: --wakeword-models specified but could not locate openWakeWord model directory."
+    echo "  Place melspectrogram.onnx and embedding_model.onnx manually in: $MODEL_DIR"
+  else
+    for f in melspectrogram.onnx embedding_model.onnx; do
+      if [[ -f "$WW_SRC_DIR/$f" ]]; then
+        echo "Installing wakeword shared model → $MODEL_DIR/$f"
+        cp "$WW_SRC_DIR/$f" "$MODEL_DIR/$f"
+      fi
+    done
+  fi
+fi
+
 echo ""
 echo "Installation complete."
 echo ""
@@ -96,3 +124,8 @@ echo "  • Copy the Hyprland examples:"
 echo "      cp examples/hypr/* ~/.config/hypr/"
 echo ""
 echo "  Edit $CONFIG_DIR/config.toml to customise model, mic source, etc."
+echo ""
+echo "  For wakeword (hands-free) mode:"
+echo "    1. sudo pacman -S onnxruntime-cpu   (or onnxruntime-cuda)"
+echo "    2. Place melspectrogram.onnx, embedding_model.onnx, hey_hyper.onnx in $MODEL_DIR"
+echo "    3. Set wakeword_enabled = true in $CONFIG_DIR/config.toml"

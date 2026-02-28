@@ -30,24 +30,25 @@ else
 endif
 
 # ── Phony targets ─────────────────────────────────────────────────
-.PHONY: all build build-cuda install clean clean-all whisper clone test smoke lint fmt help check-portaudio
+.PHONY: all build build-cuda install clean clean-all whisper clone test smoke lint fmt help check-portaudio check-onnxruntime build-wakeword-smoke
 
 all: build
 
 help:
 	@echo "Targets:"
-	@echo "  build        Build the voice-controls binary (CPU)"
-	@echo "  build-cuda   Build with CUDA GPU acceleration"
-	@echo "  whisper      Compile libwhisper.a from whisper.cpp"
-	@echo "  clone        Clone whisper.cpp into third_party/"
-	@echo "  model        Download the default .en model"
-	@echo "  smoke        Run STT smoke test (requires model)"
-	@echo "  test         Run Go tests"
-	@echo "  lint         Run Go vet"
-	@echo "  fmt          Format Go source"
-	@echo "  install      Install binary, config, model and systemd service"
-	@echo "  clean        Remove build artifacts"
-	@echo "  clean-all    Remove build artifacts and whisper.cpp clone"
+	@echo "  build                Build the voice-controls binary (CPU)"
+	@echo "  build-cuda           Build with CUDA GPU acceleration"
+	@echo "  build-wakeword-smoke Build the wakeword pipeline smoke-test binary"
+	@echo "  whisper              Compile libwhisper.a from whisper.cpp"
+	@echo "  clone                Clone whisper.cpp into third_party/"
+	@echo "  model                Download the default .en model"
+	@echo "  smoke                Run STT smoke test (requires model)"
+	@echo "  test                 Run Go tests"
+	@echo "  lint                 Run Go vet"
+	@echo "  fmt                  Format Go source"
+	@echo "  install              Install binary, config, model and systemd service"
+	@echo "  clean                Remove build artifacts"
+	@echo "  clean-all            Remove build artifacts and whisper.cpp clone"
 
 # ── System dependency check ───────────────────────────────────────
 # Verifies portaudio19-dev (Debian/Ubuntu) or portaudio (Arch) is installed.
@@ -58,6 +59,16 @@ check-portaudio:
 		 echo "  Arch:          sudo pacman -S portaudio"; \
 		 echo "  Debian/Ubuntu: sudo apt install portaudio19-dev"; \
 		 exit 1)
+
+# ── ONNX Runtime check ────────────────────────────────────────
+# Required only for wakeword detection. Warns if not present (non-fatal
+# for the main build since wakeword is opt-in at runtime).
+check-onnxruntime:
+	@ls /usr/lib/libonnxruntime.so 2>/dev/null || \
+	 ls /usr/local/lib/libonnxruntime.so 2>/dev/null || \
+		(echo "WARNING: libonnxruntime.so not found — wakeword detection will be unavailable."; \
+		 echo "  Arch (CPU): sudo pacman -S onnxruntime-cpu"; \
+		 echo "  Arch (CUDA): sudo pacman -S onnxruntime-cuda")
 
 # ── Clone whisper.cpp ─────────────────────────────────────────────
 clone: $(WHISPER_DIR)/CMakeLists.txt
@@ -98,6 +109,14 @@ build-smoke: check-portaudio whisper
 	C_INCLUDE_PATH=$(INCLUDE_PATH) \
 	LIBRARY_PATH=$(LIBRARY_PATH) \
 	go build $(BUILD_FLAGS) -o build/audio-smoke ./cmd/audio-smoke
+
+# Build wakeword pipeline smoke-test binary (not installed, requires onnxruntime)
+build-wakeword-smoke: check-portaudio whisper check-onnxruntime
+	@mkdir -p build
+	CGO_ENABLED=1 \
+	C_INCLUDE_PATH=$(INCLUDE_PATH) \
+	LIBRARY_PATH=$(LIBRARY_PATH) \
+	go build $(BUILD_FLAGS) -o build/wakeword-smoke ./cmd/wakeword-smoke
 
 # ── Install ──────────────────────────────────────────────────────
 install: build

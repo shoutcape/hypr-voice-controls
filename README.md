@@ -183,24 +183,28 @@ cp build/voice-controls ~/.local/bin/
 ```
 hypr-voice-controls/
 ├── cmd/
-│   └── voice-controls/     # CLI entry point (--daemon / --input)
+│   ├── voice-controls/       # CLI entry point (--daemon / --input)
+│   ├── wakeword-smoke/       # Dev tool: validate wakeword pipeline
+│   ├── audio-smoke/          # Dev tool: record + transcribe test
+│   └── stt-smoke/            # Dev tool: transcribe WAV file
 ├── internal/
-│   ├── config/             # TOML config loading, env var overrides, defaults
-│   ├── daemon/             # Socket server, model lifecycle, session state
-│   ├── client/             # Socket client, daemon auto-start
-│   ├── ipc/                # JSON-line protocol (Request / Response types)
-│   ├── stt/                # whisper.cpp wrapper (model load, transcribe)
-│   ├── audio/              # PortAudio capture (callback stream, in-memory PCM)
-│   ├── output/             # wl-copy + hyprctl paste, text sanitisation
-│   └── notify/             # hyprctl notify + notify-send fallback
+│   ├── config/               # TOML config loading, env var overrides, defaults
+│   ├── daemon/               # Socket server, model lifecycle, session state
+│   ├── client/               # Socket client, daemon auto-start
+│   ├── ipc/                  # JSON-line protocol (Request / Response types)
+│   ├── stt/                  # whisper.cpp wrapper (model load, transcribe)
+│   ├── audio/                # PortAudio shared stream, capture, silence detector
+│   ├── wakeword/             # openWakeWord ONNX pipeline (mel→emb→classifier)
+│   ├── output/               # wl-copy + hyprctl paste, text sanitisation
+│   └── notify/               # hyprctl notify + notify-send fallback
 ├── examples/
-│   ├── hypr/               # Hyprland keybinding and autostart configs
-│   └── systemd/            # Systemd user service unit
+│   ├── hypr/                 # Hyprland keybinding and autostart configs
+│   └── systemd/              # Systemd user service unit
 ├── scripts/
-│   ├── download-model.sh   # Fetch GGML model from HuggingFace
-│   └── test-dictation.sh   # End-to-end manual test script
-├── Makefile                # Build orchestration
-└── config.example.toml     # Annotated example configuration
+│   ├── download-model.sh     # Fetch GGML model from HuggingFace
+│   └── test-dictation.sh     # End-to-end manual test script
+├── Makefile                  # Build orchestration
+└── config.example.toml       # Annotated example configuration
 ```
 
 ### IPC protocol
@@ -252,16 +256,85 @@ Two dev-only binaries in `cmd/` are not installed but useful during development:
 
 ---
 
+## Wakeword (hands-free) mode
+
+Optional always-listening wakeword detection using the [openWakeWord](https://github.com/dscripka/openWakeWord) three-stage ONNX pipeline — no cloud, no Python at runtime.
+
+### Requirements
+
+- ONNX Runtime shared library (CPU sufficient for wakeword; wakeword models are tiny):
+  ```bash
+  sudo pacman -S onnxruntime-cpu   # or onnxruntime-cuda for GPU
+  ```
+- Three ONNX model files in `~/.local/share/voice-controls/models/`:
+  - `melspectrogram.onnx` — shared; from [openWakeWord resources](https://github.com/dscripka/openWakeWord/tree/main/openwakeword/resources/models)
+  - `embedding_model.onnx` — shared; from the same location
+  - `hey_hyper.onnx` — your trained wakeword classifier
+
+### Setup
+
+1. Install the ONNX Runtime library (see above).
+2. Copy the three model files into the models directory:
+   ```bash
+   MODEL_DIR=~/.local/share/voice-controls/models
+   mkdir -p "$MODEL_DIR"
+   cp path/to/melspectrogram.onnx "$MODEL_DIR/"
+   cp path/to/embedding_model.onnx "$MODEL_DIR/"
+   cp path/to/hey_hyper.onnx "$MODEL_DIR/"
+   ```
+3. Enable wakeword in your config:
+   ```toml
+   wakeword_enabled = true
+   wakeword_threshold = 0.5
+   ```
+4. Restart the daemon:
+   ```bash
+   systemctl --user restart voice-controls
+   ```
+
+### How wakeword detection works
+
+```
+always listening
+    └─▶ mic audio → melspectrogram model → embedding model → wakeword classifier
+            └─▶ score > threshold for N consecutive frames?
+                    └─▶ YES → start recording automatically
+                    └─▶ silence for 1.5s or 10s hard cap → stop recording
+                    └─▶ whisper.cpp transcribes → paste into focused window
+```
+
+Push-to-talk continues to work alongside wakeword mode. PTT always preempts any active wakeword-triggered session.
+
+### Validate the pipeline
+
+```bash
+# Build the smoke-test binary (requires onnxruntime installed)
+make build-wakeword-smoke
+
+# Run it with your model files
+./build/wakeword-smoke \
+  -mel ~/.local/share/voice-controls/models/melspectrogram.onnx \
+  -emb ~/.local/share/voice-controls/models/embedding_model.onnx \
+  -ww  ~/.local/share/voice-controls/models/hey_hyper.onnx \
+  -threshold 0.5
+
+# Say your wakeword — you should see:
+# [15:04:05.123] DETECTED
+```
+
+---
+
 ## Current status
 
 | Phase | Feature | Status |
 |-------|---------|--------|
 | 1 | Build system (Makefile, Go module, project structure) | Done |
 | 2 | STT integration (whisper.cpp via CGO) | Done |
-| 3 | Audio capture (PortAudio callback stream, in-memory PCM) | Done |
+| 3 | Audio capture (PortAudio, shared stream) | Done |
 | 4 | Daemon + IPC (Unix socket, JSON-line protocol) | Done |
 | 5 | Text output (clipboard paste + desktop notifications) | Done |
 | 6 | Config file (TOML), systemd service, Hyprland examples | Done |
+| 7 | Wakeword detection (openWakeWord ONNX, Go-native inference) | Done |
 
 ---
 
