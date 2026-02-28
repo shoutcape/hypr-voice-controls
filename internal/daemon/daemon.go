@@ -2,20 +2,24 @@
 //
 // Lifecycle:
 //  1. Initialise PortAudio (audio.Init).
-//  2. Load whisper model into memory (kept warm between activations).
-//  3. Create Unix domain socket at cfg.SocketPath with mode 0600.
-//  4. Print "READY\n" to stdout — the client waits for this before connecting.
-//  5. Accept connections; handle each in its own goroutine.
-//  6. On SIGTERM/SIGINT: stop any active session, close socket, free model,
-//     teardown PortAudio (audio.Term).
+//  2. Open the shared audio stream (always-on mic).
+//  3. Load whisper model into memory (kept warm between activations).
+//  4. If wakeword is enabled: initialise ONNX Runtime, load wakeword detector,
+//     start the wakeword listener goroutine.
+//  5. Create Unix domain socket at cfg.SocketPath with mode 0600.
+//  6. Print "READY\n" to stdout — the client waits for this before connecting.
+//  7. Accept connections; handle each in its own goroutine.
+//  8. On SIGTERM/SIGINT: stop any active session, close socket, free model,
+//     close shared stream, teardown PortAudio (audio.Term).
 //
 // Session state machine (per daemon instance, not per connection):
 //
 //	idle ──dictate-start──▶ recording ──dictate-stop──▶ transcribing ──▶ idle
-//	        (concurrent start preempts previous session)
+//	idle ──wakeword──▶ recording ──silence/timeout──▶ transcribing ──▶ idle
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -23,6 +27,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/shoutcape/hypr-voice-controls/internal/audio"
 	"github.com/shoutcape/hypr-voice-controls/internal/config"
@@ -30,7 +35,12 @@ import (
 	"github.com/shoutcape/hypr-voice-controls/internal/notify"
 	"github.com/shoutcape/hypr-voice-controls/internal/output"
 	"github.com/shoutcape/hypr-voice-controls/internal/stt"
+	"github.com/shoutcape/hypr-voice-controls/internal/wakeword"
 )
+
+// silenceThreshold is the RMS energy level below which audio is considered
+// silent for the purposes of auto-stopping wakeword-triggered recordings.
+const silenceThreshold = 0.02
 
 // session holds the state for one active recording session.
 type session struct {
@@ -41,6 +51,8 @@ type session struct {
 type daemon struct {
 	cfg     *config.Config
 	engine  *stt.Engine
+	stream  *audio.SharedStream
+	wwWG    sync.WaitGroup
 	mu      sync.Mutex
 	current *session // nil when idle
 }
@@ -53,7 +65,14 @@ func Run(cfg *config.Config) error {
 	}
 	defer audio.Term()
 
-	// ── Load model ───────────────────────────────────────────────
+	// ── Open shared audio stream (always-on mic) ─────────────────
+	stream, err := audio.OpenShared(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to open shared audio stream: %w", err)
+	}
+	defer stream.Close()
+
+	// ── Load whisper model ───────────────────────────────────────
 	log.Printf("loading model: %s", cfg.ModelPath)
 	engine, err := stt.NewEngine(cfg)
 	if err != nil {
@@ -62,15 +81,55 @@ func Run(cfg *config.Config) error {
 	defer engine.Close()
 	log.Printf("model loaded")
 
-	d := &daemon{cfg: cfg, engine: engine}
+	d := &daemon{cfg: cfg, engine: engine, stream: stream}
+
+	// ── Wakeword setup ───────────────────────────────────────────
+	if cfg.WakewordEnabled {
+		var wwCancel context.CancelFunc
+		var wwStarted bool
+		var detector *wakeword.Detector
+		var ortReady bool
+
+		if err := wakeword.InitORT(cfg.OnnxLibPath); err != nil {
+			// Non-fatal: log and continue in PTT-only mode.
+			log.Printf("wakeword: ONNX Runtime init failed: %v — disabling wakeword", err)
+		} else {
+			ortReady = true
+			det, werr := wakeword.New(cfg)
+			if werr != nil {
+				log.Printf("wakeword: detector init failed: %v — disabling wakeword", werr)
+			} else {
+				detector = det
+				wwCtx, cancel := context.WithCancel(context.Background())
+				wwCancel = cancel
+				d.wwWG.Add(1)
+				go d.runWakewordLoop(wwCtx, detector)
+				wwStarted = true
+				log.Printf("wakeword: listening for wakeword")
+			}
+		}
+
+		defer func() {
+			if wwCancel != nil {
+				wwCancel()
+			}
+			if wwStarted {
+				d.wwWG.Wait()
+			}
+			if detector != nil {
+				detector.Close()
+			}
+			if ortReady {
+				wakeword.DestroyORT()
+			}
+		}()
+	}
 
 	// ── Socket setup ─────────────────────────────────────────────
-	// Remove stale socket from a previous (crashed) run.
 	if err := removeStaleSocket(cfg.SocketPath); err != nil {
 		return err
 	}
 
-	// Create the socket with restrictive permissions (owner-only).
 	oldUmask := syscall.Umask(0o177)
 	ln, err := net.Listen("unix", cfg.SocketPath)
 	syscall.Umask(oldUmask)
@@ -90,12 +149,10 @@ func Run(cfg *config.Config) error {
 		<-sigCh
 		log.Printf("shutting down")
 		d.cancelSession()
-		ln.Close() // unblocks Accept
+		ln.Close()
 	}()
 
 	// ── Announce ready ───────────────────────────────────────────
-	// The client waits for "READY\n" on stdout before sending the first
-	// request. Print it after the socket is open so there's no race.
 	fmt.Println(ipc.ReadyMsg)
 
 	// ── Accept loop ──────────────────────────────────────────────
@@ -103,7 +160,6 @@ func Run(cfg *config.Config) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			// A closed listener means we were asked to shut down.
 			return nil
 		}
 		go d.handleConn(conn)
@@ -140,31 +196,26 @@ func (d *daemon) handleConn(conn net.Conn) {
 	}
 }
 
-// handleStart begins a new recording session, preempting any existing one.
+// handleStart begins a new push-to-talk recording session, preempting any
+// existing session (including wakeword-triggered ones).
 func (d *daemon) handleStart() *ipc.Response {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Preempt any existing session.
-	// Stop() calls stream.Stop() which blocks for up to one callback period
-	// (~32 ms) while holding d.mu. This is acceptable at the current buffer
-	// size; if framesPerBuffer were ever increased significantly, consider
-	// releasing d.mu before calling Stop().
 	if d.current != nil {
 		log.Printf("preempting existing session")
-		_, _ = d.current.capture.Stop() // best-effort; discard samples
+		_, _ = d.current.capture.Stop()
 		d.current.capture.Cleanup()
 		d.current = nil
 	}
 
-	cap, err := audio.Start(d.cfg)
+	cap, err := audio.StartFromStream(d.stream, d.cfg)
 	if err != nil {
 		return ipc.Err(fmt.Sprintf("failed to start recording: %v", err))
 	}
 
 	d.current = &session{capture: cap}
-	log.Printf("recording started")
-	// Non-fatal: notify the user that recording is active.
+	log.Printf("recording started (PTT)")
 	if err := notify.Send(notify.Info, "Recording..."); err != nil {
 		log.Printf("notify error: %v", err)
 	}
@@ -182,6 +233,13 @@ func (d *daemon) handleStop() *ipc.Response {
 	if sess == nil {
 		return ipc.Err("no active recording session")
 	}
+
+	return d.transcribeAndPaste(sess)
+}
+
+// transcribeAndPaste stops a session, transcribes its audio, pastes the
+// result, and sends a notification. Returns an IPC response.
+func (d *daemon) transcribeAndPaste(sess *session) *ipc.Response {
 	defer sess.capture.Cleanup()
 
 	samples, err := sess.capture.Stop()
@@ -206,7 +264,6 @@ func (d *daemon) handleStop() *ipc.Response {
 		return ipc.OK("")
 	}
 
-	// Paste into the focused application.
 	if err := output.Paste(d.cfg, cleanText); err != nil {
 		log.Printf("paste error: %v", err)
 		if nerr := notify.Send(notify.Error, fmt.Sprintf("Paste failed: %v", err)); nerr != nil {
@@ -218,10 +275,143 @@ func (d *daemon) handleStop() *ipc.Response {
 
 	if err := notify.Send(notify.Success, cleanText); err != nil {
 		log.Printf("notify error: %v", err)
-	} else {
-		log.Printf("success notification sent")
 	}
 	return ipc.OK(cleanText)
+}
+
+// runWakewordLoop runs in a goroutine and feeds audio from the shared stream
+// to the wakeword detector. On detection, it starts a wakeword-triggered
+// recording session with auto-stop.
+func (d *daemon) runWakewordLoop(ctx context.Context, detector *wakeword.Detector) {
+	defer d.wwWG.Done()
+	sub := d.stream.Subscribe()
+	defer d.stream.Unsubscribe(sub)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case chunk, ok := <-sub:
+			if !ok {
+				return
+			}
+			// Skip wakeword inference while a dictation session is active.
+			d.mu.Lock()
+			active := d.current != nil
+			d.mu.Unlock()
+			if active {
+				continue
+			}
+
+			if detector.Feed(chunk) {
+				log.Printf("wakeword: detected — starting auto-record session")
+				d.handleWakewordTrigger()
+			}
+		}
+	}
+}
+
+// handleWakewordTrigger starts a wakeword-triggered recording session and
+// spawns a monitor goroutine that auto-stops it on silence or hard timeout.
+func (d *daemon) handleWakewordTrigger() {
+	d.mu.Lock()
+
+	// If PTT started concurrently, let PTT win.
+	if d.current != nil {
+		log.Printf("wakeword: PTT session active — ignoring trigger")
+		d.mu.Unlock()
+		return
+	}
+
+	cap, err := audio.StartFromStream(d.stream, &config.Config{
+		MaxRecordSecs: d.cfg.WakewordMaxRecordSecs,
+	})
+	if err != nil {
+		d.mu.Unlock()
+		log.Printf("wakeword: failed to start capture: %v", err)
+		return
+	}
+
+	sess := &session{capture: cap}
+	d.current = sess
+	d.mu.Unlock()
+
+	if err := notify.Send(notify.Info, "Listening..."); err != nil {
+		log.Printf("notify error: %v", err)
+	}
+
+	// Monitor for silence or hard timeout in a separate goroutine so we don't
+	// block the wakeword listener loop.
+	go d.monitorWakewordSession(sess)
+}
+
+// monitorWakewordSession watches a wakeword-triggered session and stops it
+// when silence is detected for the configured duration or when the hard cap
+// is reached. After stopping, it hands off to transcribeAndPaste.
+func (d *daemon) monitorWakewordSession(sess *session) {
+	silenceStop := time.Duration(d.cfg.WakewordSilenceStopSecs * float64(time.Second))
+	hardCap := time.Duration(d.cfg.WakewordMaxRecordSecs) * time.Second
+
+	sd := audio.NewSilenceDetector(silenceThreshold, 16000)
+	sub := d.stream.Subscribe()
+	defer d.stream.Unsubscribe(sub)
+
+	deadline := time.Now().Add(hardCap)
+
+	for {
+		select {
+		case chunk, ok := <-sub:
+			if !ok {
+				// Stream closed (daemon shutting down).
+				d.mu.Lock()
+				if d.current == sess {
+					d.current = nil
+				}
+				d.mu.Unlock()
+				sess.capture.Cleanup()
+				return
+			}
+
+			sd.Feed(chunk)
+
+			// Check for silence auto-stop.
+			if sd.SilentFor() >= silenceStop {
+				log.Printf("wakeword: silence detected — stopping recording")
+				d.finishWakewordSession(sess, false)
+				return
+			}
+
+		case <-time.After(time.Until(deadline)):
+			// Hard cap reached.
+			log.Printf("wakeword: hard cap reached — stopping recording")
+			if err := notify.Send(notify.Info, "Max recording time reached"); err != nil {
+				log.Printf("notify error: %v", err)
+			}
+			d.finishWakewordSession(sess, true)
+			return
+		}
+
+		// Check PTT preemption: if d.current changed to nil or another session,
+		// the PTT handler already took over — just exit.
+		d.mu.Lock()
+		current := d.current
+		d.mu.Unlock()
+		if current != sess {
+			return
+		}
+	}
+}
+
+// finishWakewordSession clears the current session and hands it to
+// transcribeAndPaste. cappedByTimeout indicates whether the hard cap fired.
+func (d *daemon) finishWakewordSession(sess *session, _ bool) {
+	d.mu.Lock()
+	if d.current == sess {
+		d.current = nil
+	}
+	d.mu.Unlock()
+
+	d.transcribeAndPaste(sess)
 }
 
 // cancelSession stops and cleans up any active session without transcribing.
@@ -230,7 +420,7 @@ func (d *daemon) cancelSession() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.current != nil {
-		_, _ = d.current.capture.Stop() // best-effort; discard samples
+		_, _ = d.current.capture.Stop()
 		d.current.capture.Cleanup()
 		d.current = nil
 	}
@@ -240,17 +430,15 @@ func (d *daemon) cancelSession() {
 // listening on it (i.e. a previous daemon crashed and left it behind).
 func removeStaleSocket(path string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil // nothing to clean up
+		return nil
 	}
 
-	// Try connecting — if it succeeds, another daemon is already running.
 	conn, err := net.Dial("unix", path)
 	if err == nil {
 		conn.Close()
 		return fmt.Errorf("another daemon is already running (socket: %s)", path)
 	}
 
-	// Connection refused / no listener — stale socket, remove it.
 	log.Printf("removing stale socket: %s", path)
 	return os.Remove(path)
 }

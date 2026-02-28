@@ -38,6 +38,20 @@ type Config struct {
 
 	// Session
 	MaxRecordSecs int `toml:"max_record_secs"`
+
+	// Wakeword
+	WakewordEnabled         bool    `toml:"wakeword_enabled"`
+	WakewordMelModel        string  `toml:"wakeword_mel_model"`
+	WakewordEmbModel        string  `toml:"wakeword_emb_model"`
+	WakewordModel           string  `toml:"wakeword_model"`
+	WakewordThreshold       float64 `toml:"wakeword_threshold"`
+	WakewordTriggerLevel    int     `toml:"wakeword_trigger_level"`
+	WakewordRefractory      int     `toml:"wakeword_refractory"`
+	WakewordSilenceStopSecs float64 `toml:"wakeword_silence_stop_secs"`
+	WakewordMaxRecordSecs   int     `toml:"wakeword_max_record_secs"`
+
+	// ONNX Runtime
+	OnnxLibPath string `toml:"onnx_lib_path"`
 }
 
 // Defaults returns a Config populated with sane defaults.
@@ -47,16 +61,29 @@ func Defaults() *Config {
 		runtimeDir = fmt.Sprintf("/run/user/%d", os.Getuid())
 	}
 	homeDir, _ := os.UserHomeDir()
+	modelDir := filepath.Join(homeDir, ".local", "share", "voice-controls", "models")
 
 	return &Config{
 		SocketPath:    filepath.Join(runtimeDir, "voice-controls.sock"),
 		LogLevel:      "info",
-		ModelPath:     filepath.Join(homeDir, ".local", "share", "voice-controls", "models", "ggml-distil-large-v3.bin"),
+		ModelPath:     filepath.Join(modelDir, "ggml-distil-large-v3.bin"),
 		ModelName:     "distil-large-v3",
 		Device:        "cpu",
 		AudioSource:   "default",
 		PasteShortcut: "CTRL SHIFT,V,",
 		MaxRecordSecs: 120,
+
+		WakewordEnabled:         false,
+		WakewordMelModel:        filepath.Join(modelDir, "melspectrogram.onnx"),
+		WakewordEmbModel:        filepath.Join(modelDir, "embedding_model.onnx"),
+		WakewordModel:           filepath.Join(modelDir, "hey_hyper.onnx"),
+		WakewordThreshold:       0.5,
+		WakewordTriggerLevel:    4,
+		WakewordRefractory:      20,
+		WakewordSilenceStopSecs: 1.5,
+		WakewordMaxRecordSecs:   10,
+
+		OnnxLibPath: resolveOnnxLibPath(),
 	}
 }
 
@@ -93,6 +120,10 @@ func Load(configPath string) (*Config, error) {
 	// ── Expand tildes in path fields ─────────────────────────────
 	cfg.ModelPath = expandTilde(cfg.ModelPath)
 	cfg.SocketPath = expandTilde(cfg.SocketPath)
+	cfg.WakewordMelModel = expandTilde(cfg.WakewordMelModel)
+	cfg.WakewordEmbModel = expandTilde(cfg.WakewordEmbModel)
+	cfg.WakewordModel = expandTilde(cfg.WakewordModel)
+	cfg.OnnxLibPath = expandTilde(cfg.OnnxLibPath)
 
 	// ── Environment variable overrides (highest priority) ────────
 	if v := os.Getenv("VOICE_MODEL"); v != "" {
@@ -119,6 +150,18 @@ type fileConfig struct {
 	AudioSource   *string `toml:"audio_source"`
 	PasteShortcut *string `toml:"paste_shortcut"`
 	MaxRecordSecs *int    `toml:"max_record_secs"`
+
+	WakewordEnabled         *bool    `toml:"wakeword_enabled"`
+	WakewordMelModel        *string  `toml:"wakeword_mel_model"`
+	WakewordEmbModel        *string  `toml:"wakeword_emb_model"`
+	WakewordModel           *string  `toml:"wakeword_model"`
+	WakewordThreshold       *float64 `toml:"wakeword_threshold"`
+	WakewordTriggerLevel    *int     `toml:"wakeword_trigger_level"`
+	WakewordRefractory      *int     `toml:"wakeword_refractory"`
+	WakewordSilenceStopSecs *float64 `toml:"wakeword_silence_stop_secs"`
+	WakewordMaxRecordSecs   *int     `toml:"wakeword_max_record_secs"`
+
+	OnnxLibPath *string `toml:"onnx_lib_path"`
 }
 
 // applyTo merges non-nil fields from f into cfg, leaving defaults intact
@@ -148,6 +191,53 @@ func (f *fileConfig) applyTo(cfg *Config) {
 	if f.MaxRecordSecs != nil {
 		cfg.MaxRecordSecs = *f.MaxRecordSecs
 	}
+	if f.WakewordEnabled != nil {
+		cfg.WakewordEnabled = *f.WakewordEnabled
+	}
+	if f.WakewordMelModel != nil {
+		cfg.WakewordMelModel = *f.WakewordMelModel
+	}
+	if f.WakewordEmbModel != nil {
+		cfg.WakewordEmbModel = *f.WakewordEmbModel
+	}
+	if f.WakewordModel != nil {
+		cfg.WakewordModel = *f.WakewordModel
+	}
+	if f.WakewordThreshold != nil {
+		cfg.WakewordThreshold = *f.WakewordThreshold
+	}
+	if f.WakewordTriggerLevel != nil {
+		cfg.WakewordTriggerLevel = *f.WakewordTriggerLevel
+	}
+	if f.WakewordRefractory != nil {
+		cfg.WakewordRefractory = *f.WakewordRefractory
+	}
+	if f.WakewordSilenceStopSecs != nil {
+		cfg.WakewordSilenceStopSecs = *f.WakewordSilenceStopSecs
+	}
+	if f.WakewordMaxRecordSecs != nil {
+		cfg.WakewordMaxRecordSecs = *f.WakewordMaxRecordSecs
+	}
+	if f.OnnxLibPath != nil {
+		cfg.OnnxLibPath = *f.OnnxLibPath
+	}
+}
+
+// resolveOnnxLibPath returns the first libonnxruntime.so path that exists,
+// preferring the self-contained user install over the system package.
+func resolveOnnxLibPath() string {
+	homeDir, _ := os.UserHomeDir()
+	candidates := []string{
+		filepath.Join(homeDir, ".local", "lib", "libonnxruntime.so"),
+		"/usr/lib/libonnxruntime.so",
+		"/usr/local/lib/libonnxruntime.so",
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "/usr/lib/libonnxruntime.so" // fallback; will produce a clear error at runtime
 }
 
 // expandTilde replaces a leading "~" with the current user's home directory.

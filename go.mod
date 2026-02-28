@@ -7,6 +7,7 @@ require (
 	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0
 	github.com/go-audio/wav v1.1.0
 	github.com/gordonklaus/portaudio v0.0.0-20260203164431-765aa7dfa631
+	github.com/yalue/onnxruntime_go v1.26.0
 )
 
 require (

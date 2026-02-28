@@ -36,6 +36,14 @@ func main() {
 	}
 	defer audio.Term()
 
+	// Open the shared stream (always-on mic).
+	stream, err := audio.OpenShared(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening shared stream: %v\n", err)
+		os.Exit(1)
+	}
+	defer stream.Close()
+
 	// Load model first so it's warm before we record.
 	fmt.Printf("Loading model: %s\n", cfg.ModelPath)
 	engine, err := stt.NewEngine(cfg)
@@ -47,15 +55,11 @@ func main() {
 
 	fmt.Printf("Model ready. Recording %ds from %q — speak now...\n", *dur, cfg.AudioSource)
 
-	cap, err := audio.Start(cfg)
+	cap, err := audio.StartFromStream(stream, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error starting capture: %v\n", err)
 		os.Exit(1)
 	}
-	// cap.Cleanup() releases the internal buffer. The copy returned by
-	// cap.Stop() is independent and remains valid after Cleanup runs.
-	// Note: os.Exit bypasses defers — this is harmless for a short-lived
-	// CLI tool as the OS reclaims all memory on exit.
 	defer cap.Cleanup()
 
 	time.Sleep(time.Duration(*dur) * time.Second)
