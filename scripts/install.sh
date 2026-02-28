@@ -61,10 +61,10 @@ mkdir -p "$MODEL_DIR"
 
 # ── Model download ────────────────────────────────────────────────
 if $INSTALL_MODEL; then
-  DEFAULT_MODEL="$MODEL_DIR/ggml-base.en.bin"
+  DEFAULT_MODEL="$MODEL_DIR/ggml-distil-large-v3.bin"
   if [[ ! -f "$DEFAULT_MODEL" ]]; then
-    echo "Downloading default model (base.en) → $MODEL_DIR"
-    "$ROOT/scripts/download-model.sh" "$MODEL_DIR" base.en
+    echo "Downloading default model (distil-large-v3, ~756 MB) → $MODEL_DIR"
+    "$ROOT/scripts/download-model.sh" "$MODEL_DIR"
   else
     echo "Model already present: $DEFAULT_MODEL"
   fi

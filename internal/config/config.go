@@ -51,8 +51,8 @@ func Defaults() *Config {
 	return &Config{
 		SocketPath:    filepath.Join(runtimeDir, "voice-controls.sock"),
 		LogLevel:      "info",
-		ModelPath:     filepath.Join(homeDir, ".local", "share", "voice-controls", "models", "ggml-base.en.bin"),
-		ModelName:     "base.en",
+		ModelPath:     filepath.Join(homeDir, ".local", "share", "voice-controls", "models", "ggml-distil-large-v3.bin"),
+		ModelName:     "distil-large-v3",
 		Device:        "cpu",
 		AudioSource:   "default",
 		PasteShortcut: "CTRL SHIFT,V,",

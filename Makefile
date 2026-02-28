@@ -110,9 +110,9 @@ model:
 
 # ── Smoke test (requires model) ──────────────────────────────────
 smoke: build-smoke
-	@test -f $(MODELS_DIR)/ggml-base.en.bin || (echo "Run 'make model' first" && exit 1)
+	@test -f $(MODELS_DIR)/ggml-distil-large-v3.bin || (echo "Run 'make model' first" && exit 1)
 	./build/stt-smoke \
-		-model $(MODELS_DIR)/ggml-base.en.bin \
+		-model $(MODELS_DIR)/ggml-distil-large-v3.bin \
 		-wav third_party/whisper.cpp/samples/jfk.wav \
 		2>/dev/null
 

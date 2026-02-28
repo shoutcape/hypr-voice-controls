@@ -1,6 +1,10 @@
 // Package stt wraps the whisper.cpp Go bindings to provide speech-to-text.
 // It loads a GGML model once and keeps it resident in memory for fast repeated
 // transcription (no cold-start per activation).
+//
+// Both English-only (.en) models and multilingual models (e.g. distil-large-v3)
+// are supported. Multilingual models have English forced via SetLanguage("en")
+// so output is always English without auto-detection overhead.
 package stt
 
 import (
@@ -40,10 +44,6 @@ func NewEngine(cfg *config.Config) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load whisper model: %w", err)
 	}
-	if model.IsMultilingual() {
-		_ = model.Close()
-		return nil, fmt.Errorf("english-only mode requires a .en model (got multilingual model at %q)", cfg.ModelPath)
-	}
 
 	return &Engine{model: model, cfg: cfg}, nil
 }
@@ -68,6 +68,15 @@ func (e *Engine) Transcribe(samples []float32) (*Result, error) {
 
 	// Use all available CPUs for inference.
 	ctx.SetThreads(uint(runtime.NumCPU()))
+
+	// For multilingual models (e.g. distil-large-v3), pin the language to
+	// English so whisper skips auto-detection and transcribes in English.
+	// English-only (.en) models do not support SetLanguage and skip this.
+	if ctx.IsMultilingual() {
+		if err := ctx.SetLanguage("en"); err != nil {
+			return nil, fmt.Errorf("failed to set language to English: %w", err)
+		}
+	}
 
 	ctx.ResetTimings()
 

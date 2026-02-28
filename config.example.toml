@@ -6,13 +6,13 @@
 # ── Speech-to-text model ─────────────────────────────────────────
 
 # Path to the GGML whisper model file.
-# English-only .en models are faster and more accurate for English speech.
-# Available (run: ./scripts/download-model.sh models <name>):
-#   tiny.en   75 MB  — fastest, lower accuracy
-#   base.en  142 MB  — good balance (default)
-#   small.en 466 MB  — better accuracy, slower
-#   medium.en 1.5 GB — best accuracy, slowest
-model_path = "~/.local/share/voice-controls/models/ggml-base.en.bin"
+# The default model is distil-large-v3: a distilled English-only model that
+# is ~6x faster than whisper large-v3 while performing within 1% WER.
+# Download it with: make model
+#
+# Both English-only (.en) and multilingual GGML models are supported.
+# Multilingual models have English forced automatically at inference time.
+model_path = "~/.local/share/voice-controls/models/ggml-distil-large-v3.bin"
 
 # Compute device: "cpu" or "cuda"
 # CUDA requires building with: make build-cuda

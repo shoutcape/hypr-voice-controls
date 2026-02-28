@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Download a whisper.cpp GGML model file.
-# Usage: ./scripts/download-model.sh [models_dir] [model_name]
+# Download the distil-large-v3 GGML model file for whisper.cpp.
+# Usage: ./scripts/download-model.sh [models_dir]
 #
-# Defaults:
-#   models_dir = models/
-#   model_name = base.en
+# Default models_dir: models/
+#
+# The model file (ggml-distil-large-v3.bin, ~756 MB) is downloaded from:
+#   https://huggingface.co/distil-whisper/distil-large-v3-ggml
 
 set -euo pipefail
 
 MODELS_DIR="${1:-models}"
-MODEL_NAME="${2:-base.en}"
-MODEL_FILE="ggml-${MODEL_NAME}.bin"
-MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${MODEL_FILE}"
+MODEL_FILE="ggml-distil-large-v3.bin"
+MODEL_URL="https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/${MODEL_FILE}"
 
 mkdir -p "$MODELS_DIR"
 
@@ -22,7 +22,7 @@ if [[ -f "$DEST" ]]; then
     exit 0
 fi
 
-echo "Downloading ${MODEL_FILE} to ${DEST}..."
+echo "Downloading ${MODEL_FILE} to ${DEST} (~756 MB)..."
 
 if command -v curl &>/dev/null; then
     curl -L --progress-bar -o "$DEST" "$MODEL_URL"

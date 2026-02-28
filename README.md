@@ -77,23 +77,12 @@ make build-cuda
 ### 2. Download a model
 
 ```bash
-make model          # downloads ggml-base.en.bin (~142 MB) into models/
+make model          # downloads ggml-distil-large-v3.bin (~756 MB) into models/
 ```
 
-Available English-only models (faster and more accurate than multilingual):
-
-| Model | Size | Speed | Accuracy |
-|-------|------|-------|----------|
-| `tiny.en` | 75 MB | fastest | lowest |
-| `base.en` | 142 MB | fast | good ← default |
-| `small.en` | 466 MB | moderate | better |
-| `medium.en` | 1.5 GB | slow | best |
-
-To download a different model:
-
-```bash
-./scripts/download-model.sh models small.en
-```
+The default model is **distil-large-v3**: a knowledge-distilled English model that
+is ~6× faster than Whisper large-v3 while staying within 1% WER of it. It is
+trained exclusively on English audio and has English forced at inference time.
 
 ### 3. Test the pipeline
 
@@ -119,7 +108,7 @@ Key settings (`~/.config/voice-controls/config.toml`):
 
 ```toml
 # Path to the GGML model file
-model_path = "~/.local/share/voice-controls/models/ggml-base.en.bin"
+model_path = "~/.local/share/voice-controls/models/ggml-distil-large-v3.bin"
 
 # Audio input device ("default" uses system default mic)
 audio_source = "default"
@@ -255,10 +244,10 @@ Two dev-only binaries in `cmd/` are not installed but useful during development:
 
 ```bash
 # Test STT with a WAV file directly
-./build/stt-smoke -model models/ggml-base.en.bin -wav path/to/file.wav
+./build/stt-smoke -model models/ggml-distil-large-v3.bin -wav path/to/file.wav
 
 # Test full audio capture + transcription pipeline
-./build/audio-smoke -dur 3 -model models/ggml-base.en.bin
+./build/audio-smoke -dur 3 -model models/ggml-distil-large-v3.bin
 ```
 
 ---
@@ -280,5 +269,4 @@ Two dev-only binaries in `cmd/` are not installed but useful during development:
 
 - CUDA build requires the CUDA toolkit at compile time; CPU-only is the default.
 - The whisper.cpp C library prints verbose init logs to stderr on startup; these are suppressed in normal use but visible in daemon logs.
-- `.en` models only — multilingual models are not supported by design.
 - PortAudio device enumeration emits harmless ALSA probe warnings to stderr during initialisation; these can be silenced by redirecting stderr (`2>/dev/null`) or are hidden in normal daemon use via journald.
