@@ -30,7 +30,7 @@ else
 endif
 
 # ── Phony targets ─────────────────────────────────────────────────
-.PHONY: all build build-cuda install clean clean-all whisper clone test smoke lint fmt help check-portaudio check-onnxruntime build-wakeword-smoke
+.PHONY: all build build-cuda build-wakeword-bridge install clean clean-all whisper clone test smoke lint fmt help check-portaudio check-onnxruntime build-wakeword-smoke
 
 all: build
 
@@ -38,6 +38,7 @@ help:
 	@echo "Targets:"
 	@echo "  build                Build the voice-controls binary (CPU)"
 	@echo "  build-cuda           Build with CUDA GPU acceleration"
+	@echo "  build-wakeword-bridge Build the voxtype wakeword bridge binary"
 	@echo "  build-wakeword-smoke Build the wakeword pipeline smoke-test binary"
 	@echo "  whisper              Compile libwhisper.a from whisper.cpp"
 	@echo "  clone                Clone whisper.cpp into third_party/"
@@ -97,6 +98,11 @@ build: check-portaudio whisper
 
 build-cuda:
 	$(MAKE) build GGML_CUDA=1
+
+build-wakeword-bridge: check-portaudio check-onnxruntime
+	@echo "==> Building voice-controls-wakeword-bridge..."
+	@mkdir -p build
+	CGO_ENABLED=1 go build -o build/voice-controls-wakeword-bridge ./cmd/wakeword-bridge
 
 # Build dev smoke-test binaries (not installed)
 build-smoke: check-portaudio whisper

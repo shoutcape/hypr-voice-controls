@@ -1,0 +1,22 @@
+[Unit]
+Description=Voice Controls Wakeword Bridge for Voxtype
+Documentation=https://github.com/shoutcape/hypr-voice-controls
+After=graphical-session.target pipewire.service pulseaudio.service voxtype.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/voice-controls-wakeword-bridge
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/voice-controls %h/.local/share/voice-controls /run/user/%U
+PrivateTmp=true
+
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=graphical-session.target

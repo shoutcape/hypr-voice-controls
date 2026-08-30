@@ -147,6 +147,24 @@ bind  = , F17, exec, voice-controls --input dictate-start
 bindr = , F17, exec, voice-controls --input dictate-stop
 ```
 
+### Voxtype keybindings
+
+To use Voxtype instead of the built-in daemon, source the separate example:
+
+```ini
+source = ~/.config/hypr/voxtype.bindings.conf
+```
+
+This keeps the same `F17` push-to-talk hotkey while handing recording,
+transcription, and output off to `voxtype`.
+
+When using these Hyprland bindings with `voxtype`, set this in `~/.config/voxtype/config.toml`:
+
+```toml
+[hotkey]
+enabled = false
+```
+
 ### Auto-start with Hyprland
 
 Copy and enable the systemd user service:
@@ -170,6 +188,18 @@ systemctl --user status voice-controls
 journalctl --user -u voice-controls -f
 ```
 
+### Use Voxtype instead
+
+If you are moving to `voxtype`, install its user service and source
+`voxtype.autostart.conf` instead of `voice-controls.autostart.conf`:
+
+```ini
+source = ~/.config/hypr/voxtype.autostart.conf
+```
+
+The original `voice-controls` examples remain available for users who do not
+want to migrate.
+
 ### Install the binary
 
 ```bash
@@ -184,6 +214,7 @@ cp build/voice-controls ~/.local/bin/
 hypr-voice-controls/
 ├── cmd/
 │   ├── voice-controls/       # CLI entry point (--daemon / --input)
+│   ├── wakeword-bridge/      # Wakeword-to-Voxtype bridge
 │   ├── wakeword-smoke/       # Dev tool: validate wakeword pipeline
 │   ├── audio-smoke/          # Dev tool: record + transcribe test
 │   └── stt-smoke/            # Dev tool: transcribe WAV file
@@ -195,10 +226,11 @@ hypr-voice-controls/
 │   ├── stt/                  # whisper.cpp wrapper (model load, transcribe)
 │   ├── audio/                # PortAudio shared stream, capture, silence detector
 │   ├── wakeword/             # openWakeWord ONNX pipeline (mel→emb→classifier)
+│   ├── bridge/               # Voxtype wakeword integration
 │   ├── output/               # wl-copy + hyprctl paste, text sanitisation
 │   └── notify/               # hyprctl notify + notify-send fallback
 ├── examples/
-│   ├── hypr/                 # Hyprland keybinding and autostart configs
+│   ├── hypr/                 # Hyprland configs for voice-controls and voxtype
 │   └── systemd/              # Systemd user service unit
 ├── scripts/
 │   ├── download-model.sh     # Fetch GGML model from HuggingFace
@@ -287,10 +319,36 @@ Optional always-listening wakeword detection using the [openWakeWord](https://gi
    wakeword_enabled = true
    wakeword_threshold = 0.5
    ```
-4. Restart the daemon:
-   ```bash
-   systemctl --user restart voice-controls
-   ```
+4. Choose how you want wakeword activations handled:
+
+   - **Original flow:** restart the `voice-controls` daemon
+     ```bash
+     systemctl --user restart voice-controls
+     ```
+
+   - **Voxtype bridge:** run wakeword detection here, but let `voxtype` handle recording, transcription, and output
+     ```bash
+     make build-wakeword-bridge
+     cp build/voice-controls-wakeword-bridge ~/.local/bin/
+     systemctl --user restart voxtype
+     systemctl --user restart voice-controls-wakeword-bridge
+     ```
+
+     Add these config values when using the bridge:
+     ```toml
+     voxtype_binary = "voxtype"
+     # voxtype_config = "~/.config/voxtype/config.toml"
+     wakeword_enabled = true
+     ```
+
+     The bridge reads voxtype's state file and only triggers `voxtype record start` when voxtype is idle. Keep `state_file = "auto"` enabled in your voxtype config.
+
+5. If you use the bridge, install the example user service:
+    ```bash
+    cp examples/systemd/voice-controls-wakeword-bridge.service ~/.config/systemd/user/
+    systemctl --user daemon-reload
+    systemctl --user enable --now voice-controls-wakeword-bridge
+    ```
 
 ### How wakeword detection works
 
@@ -300,7 +358,7 @@ always listening
             └─▶ score > threshold for N consecutive frames?
                     └─▶ YES → start recording automatically
                     └─▶ silence for 1.5s or 10s hard cap → stop recording
-                    └─▶ whisper.cpp transcribes → paste into focused window
+                    └─▶ either voice-controls or voxtype handles transcription/output
 ```
 
 Push-to-talk continues to work alongside wakeword mode. PTT always preempts any active wakeword-triggered session.

@@ -25,6 +25,11 @@ type Config struct {
 	SocketPath string `toml:"socket_path"`
 	LogLevel   string `toml:"log_level"`
 
+	// Voxtype integration
+	VoxtypeBinary    string `toml:"voxtype_binary"`
+	VoxtypeConfig    string `toml:"voxtype_config"`
+	VoxtypeStateFile string `toml:"voxtype_state_file"`
+
 	// STT / Model
 	ModelPath string `toml:"model_path"`
 	ModelName string `toml:"model_name"`
@@ -66,6 +71,12 @@ func Defaults() *Config {
 	return &Config{
 		SocketPath:    filepath.Join(runtimeDir, "voice-controls.sock"),
 		LogLevel:      "info",
+		VoxtypeBinary: "voxtype",
+		VoxtypeStateFile: filepath.Join(
+			runtimeDir,
+			"voxtype",
+			"state",
+		),
 		ModelPath:     filepath.Join(modelDir, "ggml-distil-large-v3.bin"),
 		ModelName:     "distil-large-v3",
 		Device:        "cpu",
@@ -120,6 +131,8 @@ func Load(configPath string) (*Config, error) {
 	// ── Expand tildes in path fields ─────────────────────────────
 	cfg.ModelPath = expandTilde(cfg.ModelPath)
 	cfg.SocketPath = expandTilde(cfg.SocketPath)
+	cfg.VoxtypeConfig = expandTilde(cfg.VoxtypeConfig)
+	cfg.VoxtypeStateFile = expandTilde(cfg.VoxtypeStateFile)
 	cfg.WakewordMelModel = expandTilde(cfg.WakewordMelModel)
 	cfg.WakewordEmbModel = expandTilde(cfg.WakewordEmbModel)
 	cfg.WakewordModel = expandTilde(cfg.WakewordModel)
@@ -142,14 +155,17 @@ func Load(configPath string) (*Config, error) {
 // fileConfig mirrors Config but uses pointers so we can distinguish
 // "field not set in file" from "field explicitly set to zero value".
 type fileConfig struct {
-	SocketPath    *string `toml:"socket_path"`
-	LogLevel      *string `toml:"log_level"`
-	ModelPath     *string `toml:"model_path"`
-	ModelName     *string `toml:"model_name"`
-	Device        *string `toml:"device"`
-	AudioSource   *string `toml:"audio_source"`
-	PasteShortcut *string `toml:"paste_shortcut"`
-	MaxRecordSecs *int    `toml:"max_record_secs"`
+	SocketPath       *string `toml:"socket_path"`
+	LogLevel         *string `toml:"log_level"`
+	VoxtypeBinary    *string `toml:"voxtype_binary"`
+	VoxtypeConfig    *string `toml:"voxtype_config"`
+	VoxtypeStateFile *string `toml:"voxtype_state_file"`
+	ModelPath        *string `toml:"model_path"`
+	ModelName        *string `toml:"model_name"`
+	Device           *string `toml:"device"`
+	AudioSource      *string `toml:"audio_source"`
+	PasteShortcut    *string `toml:"paste_shortcut"`
+	MaxRecordSecs    *int    `toml:"max_record_secs"`
 
 	WakewordEnabled         *bool    `toml:"wakeword_enabled"`
 	WakewordMelModel        *string  `toml:"wakeword_mel_model"`
@@ -172,6 +188,15 @@ func (f *fileConfig) applyTo(cfg *Config) {
 	}
 	if f.LogLevel != nil {
 		cfg.LogLevel = *f.LogLevel
+	}
+	if f.VoxtypeBinary != nil {
+		cfg.VoxtypeBinary = *f.VoxtypeBinary
+	}
+	if f.VoxtypeConfig != nil {
+		cfg.VoxtypeConfig = *f.VoxtypeConfig
+	}
+	if f.VoxtypeStateFile != nil {
+		cfg.VoxtypeStateFile = *f.VoxtypeStateFile
 	}
 	if f.ModelPath != nil {
 		cfg.ModelPath = *f.ModelPath

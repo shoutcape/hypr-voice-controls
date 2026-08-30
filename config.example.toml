@@ -49,6 +49,21 @@ paste_shortcut = "CTRL SHIFT,V,"
 # Log level: "debug", "info", "warn", "error"
 log_level = "info"
 
+# ── Voxtype integration ───────────────────────────────────────────
+
+# Binary to run when the wakeword bridge needs to start/stop dictation.
+# Usually just "voxtype" if it is installed in your PATH.
+voxtype_binary = "voxtype"
+
+# Optional: pass a specific voxtype config file.
+# Leave empty to use voxtype's default config location.
+voxtype_config = ""
+
+# Path to voxtype's state file. The built-in default already points to
+# /run/user/$UID/voxtype/state, so you usually do not need to set this.
+# Ensure voxtype has `state_file = "auto"` (or another enabled path).
+# voxtype_state_file = "/run/user/1000/voxtype/state"
+
 # ── Wakeword (always-listening, hands-free activation) ───────────
 #
 # Requires three openWakeWord ONNX model files:
@@ -64,8 +79,8 @@ log_level = "info"
 #   sudo pacman -S onnxruntime-cpu   (or onnxruntime-cuda for GPU)
 
 # Enable always-listening wakeword detection.
-# When enabled, speaking the wakeword starts recording automatically.
-# Push-to-talk continues to work alongside wakeword mode.
+# When enabled, speaking the wakeword starts voxtype recording automatically.
+# Push-to-talk can continue to work separately through voxtype.
 wakeword_enabled = false
 
 # Path to the melspectrogram ONNX model (shared; from openWakeWord resources).
